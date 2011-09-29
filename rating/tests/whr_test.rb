@@ -6,6 +6,7 @@ require File.expand_path("../system", File.dirname(__FILE__))
 PDB = {}
 PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new(2000.0))   # Need to move to whr.rb
 
+WHR::print_constants()
 puts
 puts "winratio"
 date = DateTime.parse("2011-09-29")
@@ -15,15 +16,15 @@ for win_ratio in (1..2)
   black = PDB["b#{win_ratio}"] = WHR_Player.new("b#{win_ratio}")
   2.times do
     win_ratio.times do
-      WHR::AddGame(Game.new(date, white, black, white, weight))
+      WHR::add_game(Game.new(date, white, black, white, weight))
     end
-    WHR::AddGame(Game.new(date, white, black, black, weight))
+    WHR::add_game(Game.new(date, white, black, black, weight))
   end
-  ::WHR::mmIterate
+  ::WHR::mm_iterate
   diff = Glicko::get_kyudan_rating(white) - Glicko::get_kyudan_rating(black)
   puts "win_ratio=%d diff=%0.2f  <%s>  <%s>" % [win_ratio, diff, Glicko::rating_to_s(white), Glicko::rating_to_s(black)]
 end
 puts
 
-::WHR::printVerbosePDB()
-::WHR::printSortedPDB()
+::WHR::print_verbose_pdb()
+::WHR::print_sorted_pdb()

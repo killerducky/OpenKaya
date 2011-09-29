@@ -2,36 +2,28 @@ require 'date'
 require File.expand_path("glicko", File.dirname(__FILE__))
 require File.expand_path("../system/", File.dirname(__FILE__))
 
-#module WHR
+# WHR requires a lot of state for each player
+# Here are some classes to hold that state
+# Actual WHR module below
 
-MMITER_CHANGE_LIMIT = 0.01
-MMITER_TURN_LIMIT = 3000
-LINK_STRENGTH = 2000.0        # draws/days
-MIN_LINK_STRENGTH = 20.0    # Prevent weird things happening in weird cases (player doesn't play for a long time)
-PRIOR_WEIGHT  = 2.0
-DAYONE = DateTime.parse("2000-01-01")
-START_TIME = DateTime.now()
-PDB = {}
 
-#class RType: (elo, shifted_elo, kgsdan, kgskyu, egf, gamma) = range(6)
-
-def gammaToElo(gamma)    return 400.0*Math::log10(gamma) end
-def eloToGamma(elo)      return 10**(elo/400.0) end
-def pWinEloDiff(elo_diff) return 1/(1+10**(elo_diff/400.0)) end
-#def pWinGamma(gamma):  return gamma / (gamma + 1.0)          # !! Not verified
-#def eloDiffGivenPWin(pW): return math.log((1-pW)/pW) * 400   # !! Not verified
-def tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
-
+# Abstract out what rating scale the ratings are on
 class Rating
   attr_accessor :elo
-  def initialize(elo)
+  def initialize(elo=nil)
     @elo = elo
+    return self
   end
   def gamma=(gamma)
-    @elo = gammaToElo(gamma)
+    @elo = 400.0*Math::log10(gamma)
+    return self
   end
   def gamma()
-    return eloToGamma(@elo)
+    return 10**(@elo/400.0)
+  end
+  def aga_rating=(aga_rating)
+    @elo = ::Glicko::set_aga_rating({}, aga_rating).rating
+    return self
   end
 end
 
@@ -46,21 +38,20 @@ class PlayerDay
     @player   = player
   end
   def numgames()
-    return len(@games)
+    return @games.length
   end
   def winrate()
-    return -1.0 if len(@games) == 0
-    return @wins / len(@games)
+    return -1.0 if @games.length == 0
+    return @wins / @games.length
   end
 end
 
 class WHR_Player
-  attr_accessor :vpd, :name, :prior_initialized, :group, :num_win, :num_loss, :anchor_R, :prior_games
+  attr_accessor :vpd, :name, :prior_initialized, :num_win, :num_loss, :anchor_R, :prior_games
   def initialize(name, anchor_R=nil)
     @vpd = []       # List of PlayerDay objects, must be in chronological order
     @name = name
     @prior_initialized = false
-    @group = nil
     @num_win = 0
     @num_loss = 0
     if anchor_R != nil
@@ -85,22 +76,22 @@ class WHR_Player
   end
   def addPrior(day)
     # Add two virtual games against the _PRIOR_ANCHOR on the first day
-    @prior_games = [Game.new(day, self, PDB["_PRIOR_ANCHOR"], self                , PRIOR_WEIGHT),
-                    Game.new(day, self, PDB["_PRIOR_ANCHOR"], PDB["_PRIOR_ANCHOR"], PRIOR_WEIGHT)]
+    @prior_games = [Game.new(day, self, ::PDB[:prior_anchor], self                , WHR::PRIOR_WEIGHT),
+                    Game.new(day, self, ::PDB[:prior_anchor], ::PDB[:prior_anchor], WHR::PRIOR_WEIGHT)]
     for game in @prior_games
       # Use the first vpd for each player
       # It's a bit strange to use only first vpd for the _PRIOR_ANCHOR, 
       #   but it doesn't matter and it's easier
-      if PDB["_PRIOR_ANCHOR"].vpd == []
-         PDB["_PRIOR_ANCHOR"].addNewVpd(day)
+      if ::PDB[:prior_anchor].vpd == []
+         ::PDB[:prior_anchor].addNewVpd(day)
       end
       game.white_player_vpd = @vpd[0]
-      game.black_player_vpd = PDB["_PRIOR_ANCHOR"].vpd[0]
+      game.black_player_vpd = ::PDB[:prior_anchor].vpd[0]
     end
   end
   def addGame(game)
     if @vpd == [] or @vpd[-1].day != game.day
-      if @name[0] != "_" or @vpd == []  # Only use one vpd for "_xxx" players
+      if @name[0].class != Symbol or @vpd == []  # Only use one vpd for special Symbol players
         self.addNewVpd(game.day)
       end
     end
@@ -114,13 +105,13 @@ class WHR_Player
     end
     return @vpd[-1]  # return link to the vpd used
   end
-  def tostring(rtype, verbose=0)
+  def tostring(verbose=0)
     s = @name
     for vpd in @vpd
       s += "\n" if verbose > 0
-      s += vpd.r.tostring(rtype)
+      s += vpd.r.tostring()
       if verbose >= 1
-        s += " day=%s numgames=%d winrate=%0.3f" % [vpd.daytostr(), vpd.numgames(), vpd.winrate()]
+        s += " day=%s numgames=%d winrate=%0.3f" % [vpd.day, vpd.numgames(), vpd.winrate()]
         if verbose >= 2
           for game in vpd.games
             if game.winner == self then s += " W"
@@ -189,13 +180,24 @@ class Game
   end
 end
             
-def virtualDrawWeight(p1, p2)
+module WHR
+
+MMITER_CHANGE_LIMIT = 1.0
+MMITER_TURN_LIMIT = 3000
+LINK_STRENGTH = 2000.0        # draws/days
+MIN_LINK_STRENGTH = 20.0    # Prevent weird things happening in weird cases (player doesn't play for a long time)
+PRIOR_WEIGHT  = 2.0
+START_TIME = DateTime.now()
+
+def self.tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
+
+def self.virtualDrawWeight(p1, p2)
   weight = LINK_STRENGTH / (p1 - p2).abs
   weight = MIN_LINK_STRENGTH if weight < MIN_LINK_STRENGTH
   return weight
 end
 
-def mmOneVpd(currPlayer, dayidx)
+def self.mmOneVpd(currPlayer, dayidx)
   wins = 0.0
   div  = 0.0
   currPlayerVpd = currPlayer.vpd[dayidx]
@@ -219,12 +221,12 @@ def mmOneVpd(currPlayer, dayidx)
   return wins/div
 end
       
-def findUpsets()
-  for currPlayer in PDB.values()
-    next if currPlayer.name[0] == "_"
+def self.findUpsets()
+  for currPlayer in ::PDB.values()
+    next if currPlayer.name[0].class == Symbol
     for currPlayerVpd in currPlayer.vpd
       for game in currPlayerVpd.games
-        next if game.getOpponentVpd(currPlayer).player.name[0] == "_"
+        next if game.getOpponentVpd(currPlayer).player.name[0] == Symbol
         if game.winner == currPlayer
           elo_diff = game.getOpponentVpd(currPlayer).r.elo() - currPlayerVpd.r.elo()
           puts "upset: elo_diff=%f %s" % [elo_diff, game.tostring()] if elo_diff > 250
@@ -234,8 +236,8 @@ def findUpsets()
   end
 end
 
-def mmIterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
-  players = PDB.values() if players == nil # By default do all players
+def self.mmIterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
+  players = ::PDB.values() if players == nil # By default do all players
   for i in (0..turn_limit)
     maxchange = 0
     for currPlayer in players
@@ -251,53 +253,51 @@ def mmIterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
       end
       for dayidx in (0..currPlayer.vpd.length-1).to_a.reverse
         currPlayerVpd = currPlayer.vpd[dayidx]
-        newGamma = mmOneVpd(currPlayer, dayidx)
-        change = gammaToElo(newGamma) - currPlayerVpd.r.elo()
-        puts "name=%s new=%f change=%f" % [currPlayer.name, gammaToElo(newGamma), change]
+        new_rating = Rating.new
+        new_rating.gamma = mmOneVpd(currPlayer, dayidx)
+        change = new_rating.elo - currPlayerVpd.r.elo
+        #puts "name=%s new=%f change=%f" % [currPlayer.name, new_rating.elo, change]
         change = change.abs
         maxchange = change if change > maxchange
-        currPlayerVpd.r.gamma = newGamma
-        #print currPlayer.tostring(RType.elo, 1)
-        #sys.stdout.flush()
+        currPlayerVpd.r = new_rating
       end
     end
-    if i>0 and i % 10 == 0
+    if i>1 and i % 10 == 0
       puts "mmIterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
     end
     break if maxchange < MMITER_CHANGE_LIMIT
   end
-  i>0 and puts "mmIterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+  i>1 and puts "mmIterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
 end
 
 
-def AddGame(game)
+def self.AddGame(game)
   game.white_player_vpd = game.white_player.addGame(game)
   game.black_player_vpd = game.black_player.addGame(game)
   mmIterate(1, [game.white_player, game.black_player])
 end
 
 
-def printPDB(rtype)
-  for name in sorted(PDB.keys())
-    puts PDB[name].tostring(rtype, 1)
+def self.printPDB()
+  for name in sorted(::PDB.keys())
+    puts ::PDB[name].tostring(1)
   end
-  #sys.stdout.flush()
 end
 
-def printVerbosePDB(rtype, verbose=9)
-  for name in sorted(PDB.keys())
-    player = PDB[name]
-    next if player.name[0] == "_" # Skip anchors etc
+def self.printVerbosePDB(verbose=9)
+  for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
+    player = ::PDB[name]
+    next if player.name[0].class == Symbol # Skip anchors etc
     puts player.name
-    for vpd in PDB[name].vpd
-      puts "   %s day=%s numgames=%d winrate=%0.3f" % [vpd.r.tostring(rtype), vpd.daytostr(), vpd.numgames(), vpd.winrate()]
+    for vpd in ::PDB[name].vpd
+      puts "   %6.0f %4d-%02d-%02d numgames=%d winrate=%0.3f" % [vpd.r.elo, vpd.day.year, vpd.day.month, vpd.day.day, vpd.numgames, vpd.winrate]
       next if not verbose > 1
       for game in vpd.games
         opponent = game.getOpponent(player)
         opponentVpd = game.getOpponentVpd(player)
         print "      "
         print game.thisPlayerWon(player) ? "+" : "-"
-        print opponentVpd.r.tostring(rtype), opponent.name
+        print "%6.0f %s" % [opponentVpd.r.elo, opponent.name]
         if game.getWeight(player) != 1.0
           print "weight=%0.2f" % (game.getWeight(player))
         end
@@ -308,20 +308,17 @@ def printVerbosePDB(rtype, verbose=9)
 end
 
 
-def sortByMostRecentRating(name)
-  return -1.0 * PDB[name].mostRecentRating()
+def self.sortByMostRecentRating(name)
+  return -1.0 * ::PDB[name].mostRecentRating()
 end
 
-def printSortedPDB(rtype)
+def self.printSortedPDB()
   new_players = []
   i = 1
-  for name in PDB.keys().sort {|a,b| b.mostRecentRating() <=> a.mostRecentRating}
-    num_games = PDB[name].num_win + PDB[name].num_loss
-    #if num_games < 10
-    #   print "%15s %4d %0.0f %s numgames=%d" % (name, i, PDB[name].mostRecentRating(), PDB[name].group, num_games)
-    #else
-    s = "%15s %4d %0.0f %s" % [name, i, PDB[name].mostRecentRating(), PDB[name].group]
-    if num_games > 4 and name[0] != "_"
+  for name in ::PDB.keys().sort {|a,b| PDB[b].mostRecentRating() <=> PDB[a].mostRecentRating}
+    num_games = ::PDB[name].num_win + ::PDB[name].num_loss
+    s = "%15s %4d %0.0f" % [name, i, ::PDB[name].mostRecentRating()]
+    if num_games > 4 and name[0].class != Symbol
       puts s
       i += 1
     else
@@ -331,8 +328,7 @@ def printSortedPDB(rtype)
   puts
   puts "Players with 4 or less games:"
   for s in new_players do puts s end
-  #sys.stdout.flush()
 end
 
-#end  # Module WHR
+end  # Module WHR
 

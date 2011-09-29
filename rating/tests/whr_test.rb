@@ -3,22 +3,27 @@ require File.expand_path("../strategies/glicko", File.dirname(__FILE__))
 require File.expand_path("../strategies/whr", File.dirname(__FILE__))
 require File.expand_path("../system", File.dirname(__FILE__))
 
-anchor_name = "_PRIOR_ANCHOR"
-PDB[anchor_name] = WHR_Player.new(anchor_name, Rating.new(0.0))   # Need to move to whr.rb
+PDB = {}
+PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new(2000.0))   # Need to move to whr.rb
 
 puts
-puts "Equal wins"
-date = DAYONE
-PDB["w"] = WHR_Player.new("w")
-PDB["b"] = WHR_Player.new("b")
-win_ratio = 3
-5.times do
-  win_ratio.times do
-    AddGame(Game.new(date, PDB["w"], PDB["b"], PDB["w"], PRIOR_WEIGHT))
+puts "winratio"
+date = DateTime.parse("2011-09-29")
+weight = 10
+for win_ratio in (1..2)
+  white = PDB["w#{win_ratio}"] = WHR_Player.new("w#{win_ratio}")
+  black = PDB["b#{win_ratio}"] = WHR_Player.new("b#{win_ratio}")
+  2.times do
+    win_ratio.times do
+      WHR::AddGame(Game.new(date, white, black, white, weight))
+    end
+    WHR::AddGame(Game.new(date, white, black, black, weight))
   end
-  AddGame(Game.new(date, PDB["w"], PDB["b"], PDB["b"], PRIOR_WEIGHT))
+  ::WHR::mmIterate
+  diff = Glicko::get_kyudan_rating(white) - Glicko::get_kyudan_rating(black)
+  puts "win_ratio=%d diff=%0.2f  <%s>  <%s>" % [win_ratio, diff, Glicko::rating_to_s(white), Glicko::rating_to_s(black)]
 end
-diff = Glicko::get_kyudan_rating(PDB["w"]) - Glicko::get_kyudan_rating(PDB["b"])
-puts "diff=%0.2f  <%s>  <%s>" % [diff, Glicko::rating_to_s(PDB["w"]), Glicko::rating_to_s(PDB["b"])]
 puts
 
+::WHR::printVerbosePDB()
+::WHR::printSortedPDB()

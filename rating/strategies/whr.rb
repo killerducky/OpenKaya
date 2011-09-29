@@ -6,6 +6,8 @@ require File.expand_path("../system/", File.dirname(__FILE__))
 # Here are some classes to hold that state
 # Actual WHR module below
 
+# TODO:
+# Dependency on glicko is shady, especially constructing temp Player classes that glicko uses
 
 # Abstract out what rating scale the ratings are on
 class Rating
@@ -24,6 +26,12 @@ class Rating
   def aga_rating=(aga_rating)
     @elo = ::Glicko::set_aga_rating({}, aga_rating).rating
     return self
+  end
+  def aga_rating()
+    return ::Glicko::get_aga_rating(Player.new(nil, @elo))
+  end
+  def kyudan_rating()
+    return ::Glicko::get_kyudan_rating(Player.new(nil, @elo))
   end
 end
 
@@ -75,12 +83,12 @@ class WHR_Player
     @vpd[-1].r = @anchor_R.dup() if @anchor_R
   end
   def add_prior(day)
-    # Add two virtual games against the _PRIOR_ANCHOR on the first day
+    # Add two virtual games against the :prior_anchor on the first day
     @prior_games = [Game.new(day, self, ::PDB[:prior_anchor], self                , WHR::PRIOR_WEIGHT),
                     Game.new(day, self, ::PDB[:prior_anchor], ::PDB[:prior_anchor], WHR::PRIOR_WEIGHT)]
     for game in @prior_games
       # Use the first vpd for each player
-      # It's a bit strange to use only first vpd for the _PRIOR_ANCHOR, 
+      # It's a bit strange to use only first vpd for the :prior_anchor, 
       #   but it doesn't matter and it's easier
       if ::PDB[:prior_anchor].vpd == []
          ::PDB[:prior_anchor].add_new_vpd(day)
@@ -124,16 +132,9 @@ class WHR_Player
     end
     return s
   end
-  def most_recent_rating()
-    return -1.0 if @vpd == []
-    return @vpd[-1].r.elo
-  end
-  # Hack these in for ::Glicko to be happy
   def rating()
-    return most_recent_rating()
-  end
-  def rd()
-    return 33  # Bogus somewhat small rd value
+    return Rating.new(-1.0) if @vpd == []
+    return @vpd[-1].r
   end
 end
 
@@ -154,7 +155,8 @@ class Game
     opp_vpd = self.get_opponent_vpd(curr_player)
     weight = @weight
     if not opp_vpd.player.anchor_R and opp_vpd.player.num_games < 10
-       weight /= (10.0 - opp_vpd.player.num_games)
+      # Less weight if the opponent has not played many games yet
+      weight /= (10.0 - opp_vpd.player.num_games)
     end
     return weight
   end
@@ -193,8 +195,8 @@ START_TIME = DateTime.now()   # For performance tracking only
 
 def self.tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
-def self.virtual_draw_weight(p1, p2)
-  weight = LINK_STRENGTH / (p1 - p2).abs
+def self.virtual_draw_weight(day1, day2)
+  weight = LINK_STRENGTH / (day1 - day2).abs
   weight = MIN_LINK_STRENGTH if weight < MIN_LINK_STRENGTH
   return weight
 end
@@ -207,7 +209,7 @@ def self.mm_one_vpd(curr_player, dayidx)
   neighbor_vpd_list.push(curr_player.vpd[dayidx-1]) if dayidx > 0
   neighbor_vpd_list.push(curr_player.vpd[dayidx+1]) if dayidx < curr_player.vpd.length-1
   for neighbor_vpd in neighbor_vpd_list
-    num_draws = virtual_draw_weight(curr_player_vpd, neighbor_vpd)
+    num_draws = virtual_draw_weight(curr_player_vpd.day, neighbor_vpd.day)
     wins += 0.5 * num_draws
     div  += num_draws / (curr_player_vpd.r.gamma + neighbor_vpd.r.gamma)
   end
@@ -280,13 +282,15 @@ def self.add_game(game)
 end
 
 
-def self.print_pdb()
+def self.print_PDB()
+  puts "print_PDB"
   for name in sorted(::PDB.keys())
     puts ::PDB[name].tostring(1)
   end
 end
 
-def self.print_verbose_pdb(verbose=9)
+def self.print_verbose_PDB(verbose=9)
+  puts "print_verbose_PDB"
   for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
     player = ::PDB[name]
     next if player.name[0].class == Symbol # Skip anchors etc
@@ -307,15 +311,19 @@ def self.print_verbose_pdb(verbose=9)
       end
     end
   end
+  puts
 end
 
 
-def self.print_sorted_pdb()
+def self.print_sorted_PDB()
+  puts "print_sorted_PDB"
   new_players = []
   i = 1
-  for name in ::PDB.keys().sort {|a,b| PDB[b].most_recent_rating() <=> PDB[a].most_recent_rating}
-    num_games = ::PDB[name].num_games
-    s = "%15s %4d %0.0f num_games=%d" % [name, i, ::PDB[name].most_recent_rating(), num_games]
+  # TODO implement <=> for rating class
+  for name in ::PDB.keys().sort {|a,b| PDB[b].rating.elo <=> PDB[a].rating.elo}  
+    player = ::PDB[name]
+    num_games = player.num_games
+    s = "%15s #%3d %6.0f %6.2f num_games=%d" % [name, i, player.rating.elo, player.rating.aga_rating, num_games]
     if num_games > 4 and name[0].class != Symbol
       puts s
       i += 1
@@ -326,6 +334,7 @@ def self.print_sorted_pdb()
   puts
   puts "Players with 4 or less games:"
   for s in new_players do puts s end
+  puts
 end
 
 def self.print_constants()

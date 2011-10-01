@@ -42,82 +42,94 @@ def test(test)
   if (test[0] == "even")
     for day in (0..2)
       3.times do
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["killerd"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["killerd"]))
       end
     end
   elsif (test[0] == "4:1")
     for day in (0..2)
       3.times do
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
-        WHR::add_game(Game.new(day, PDB["yoyoma"], PDB["killerd"], PDB["killerd"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["yoyoma"]))
+        WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB["killerd"], PDB["killerd"]))
       end
     end
   elsif (test[0] == "improve_spike")
     day = 0
     num_games = 10
     (num_games/2).times do
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
-      WHR::add_game(Game.new(day, PDB["killerd"], PDB[:mid_rating], PDB["killerd"]))
-      WHR::add_game(Game.new(day, PDB["killerd"], PDB[:mid_rating], PDB[:mid_rating]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
+      WHR::add_game(Game.new(date+day, PDB["killerd"], PDB[:mid_rating], PDB["killerd"]))
+      WHR::add_game(Game.new(date+day, PDB["killerd"], PDB[:mid_rating], PDB[:mid_rating]))
     end
     day = 1
     (num_games/2).times do
-      WHR::add_game(Game.new(day, PDB["killerd"], PDB[:high_rating], PDB["killerd"]))
-      WHR::add_game(Game.new(day, PDB["killerd"], PDB[:high_rating], PDB[:high_rating]))
+      WHR::add_game(Game.new(date+day, PDB["killerd"], PDB[:high_rating], PDB["killerd"]))
+      WHR::add_game(Game.new(date+day, PDB["killerd"], PDB[:high_rating], PDB[:high_rating]))
     end
     # Add in non-consequential (low weight) playerday in middle
     # This experiment showed that putting the extra vpd in changed the results by ~0.5 stone
     # Ideally the link_strength should scale such that it has no impact.
     # Not sure if that is really possible though.
     #for day in (16..17)
-    #   WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"], 0.00001))
-    #   WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating], 0.00001))
+    #   WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"], 0.00001))
+    #   WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating], 0.00001))
     day = 32
     (num_games/2).times do
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating]))
     end
   elsif (test[0] == "new_strong")
     day = 0
     num_games = 20
-    WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
+    WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
     puts PDB["yoyoma"].tostring(rtype)
     num_games.times do
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
       puts PDB["yoyoma"].tostring(rtype)
+    end
+  elsif (test[0] == "strength_spike")
+    day = 0
+    num_games = 110
+    (num_games/2-2).times do
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
+    end
+    day = 100
+    (num_games/2+2).times do
+      WHR::add_game(Game.new(date+day, PDB['yoyoma'], PDB[:high_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB['yoyoma'], PDB[:high_rating], PDB[:high_rating]))
     end
   elsif (test[0] == "low_confidence_corner")
     day = 0
-    WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
+    WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
     puts PDB["yoyoma"].tostring(rtype, 1)
-    WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
+    WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
     puts PDB["yoyoma"].tostring(rtype, 1)
     day = 365*5  # 5 years later
     3.times do
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
       puts PDB["yoyoma"].tostring(rtype, 1)
     end
     puts
     3.times do
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating]))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:high_rating], PDB[:high_rating]))
     end
   elsif (test[0] == "1stone")
     (testname, prior_games_per_day, prior_winrate, break_days, post_games_per_day, post_winrate) = test
     puts "1stone prior prior_games_per_day=%d prior_winrate=%0.3f" % [prior_games_per_day, prior_winrate]
     for day in (0..179)
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"], prior_games_per_day*prior_winrate))
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating], prior_games_per_day*(1.0-prior_winrate)))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"], prior_games_per_day*prior_winrate))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating], prior_games_per_day*(1.0-prior_winrate)))
     end
     puts "1stone post  post_games_per_day=%d post_winrate=%0.3f break_days=%d" % [post_games_per_day, post_winrate, break_days]
     rating = {}
     for day in (180+break_days..360+break_days-1)
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"], post_games_per_day*post_winrate))
-      WHR::add_game(Game.new(day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating], post_games_per_day*(1.0-post_winrate)))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"], post_games_per_day*post_winrate))
+      WHR::add_game(Game.new(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating], post_games_per_day*(1.0-post_winrate)))
       rating[day] = PDB["yoyoma"].getVpd(day).R.kyudan_rating
       break if rating[day] > 1.5 # Stop after improving by a half stone
     end
@@ -145,12 +157,15 @@ def test(test)
     end
   end
   ::WHR::mm_iterate
+  ::WHR::print_verbose_PDB(1)
   ::WHR::print_sorted_PDB()
 end
 
 
 WHR::print_constants()
 win_ratio()
+
+test (["strength_spike"])
 
 #               prior         post
 #              gpd wr  break gpd wr
@@ -161,7 +176,7 @@ win_ratio()
 #                    gpd wr    break   wr
 #test(["marathon_day",   1, 0.5, 0,    1.0])   # Increasing prior sizes
 #test(["marathon_day",  10, 0.5, 0,    1.0])
-test(["marathon_day", 100, 0.5, 0,    1.0])
+#test(["marathon_day", 100, 0.5, 0,    1.0])
 
 #test(["marathon_day",  10, 0.5,   0,    1.0])  # Increasing break time
 #test(["marathon_day",  10, 0.5,  10,    1.0])  # Increasing break time

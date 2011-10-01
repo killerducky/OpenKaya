@@ -9,9 +9,30 @@ require File.expand_path("../system/", File.dirname(__FILE__))
 # TODO:
 # Dependency on glicko is shady, especially constructing temp Player classes that glicko uses
 
-# Abstract out what rating scale the ratings are on
+class WhrError < StandardError; end
+
+# Abstract out what scale the ratings are on
 class Rating
+  Q = Math.log(10)/400.0    # Convert from classic Elo to natural scale
+  KGS_KYU_TRANSFORM = 0.85/Q  # kgs 5k-
+  KGS_DAN_TRANSFORM = 1.30/Q  # kgs 2d+
+  KD_FIVE_KYU = -4.0         # Strongest 5k on the kyudan scale
+  KD_TWO_DAN  =  1.0         # Weakest   2d on the kyudan scale
+  A = (KGS_DAN_TRANSFORM - KGS_KYU_TRANSFORM) / (KD_TWO_DAN - KD_FIVE_KYU) # ~ 17.4    Intermediate constant for conversions
+  B = KGS_KYU_TRANSFORM - KD_FIVE_KYU*A                                    # ~ 208.6   Intermediate constant for conversions
+  FIVE_KYU = (A/2.0)*((KD_FIVE_KYU)**2) + (B*KD_FIVE_KYU)    # ~ 695.2 -- Glicko rating of the strongest 5k
+  TWO_DAN  = (A/2.0)*((KD_TWO_DAN )**2) + (B*KD_TWO_DAN )    # ~ 217.3 -- Glicko rating of the weakest 2d
   attr_accessor :elo
+  def self.new_aga_rating(aga_rating)
+    r = Rating.new()
+    r.aga_rating = aga_rating
+    return r
+  end
+  def self.new_kyudan(kyudan)
+    r = Rating.new()
+    r.kyudan = kyudan
+    return r
+  end
   def initialize(elo=nil)
     @elo = elo
     return self
@@ -23,17 +44,42 @@ class Rating
   def gamma()
     return 10**(@elo/400.0)
   end
-  def aga_rating=(aga_rating)
-    @elo = ::Glicko::set_aga_rating({}, aga_rating).rating
-    return self
+  def kyudan()
+    return KD_FIVE_KYU + (@elo-FIVE_KYU)/KGS_KYU_TRANSFORM if @elo < FIVE_KYU
+    return KD_TWO_DAN  + (@elo- TWO_DAN)/KGS_DAN_TRANSFORM if @elo >  TWO_DAN
+    return (Math.sqrt(2.0*A*@elo+B**2.0)-B)/A
   end
   def aga_rating()
-    return ::Glicko::get_aga_rating(Player.new(nil, @elo))
+    r = kyudan()
+    return r < 0.0 ? r - 1.0 : r + 1.0  # Add the (-1.0,1.0) gap
   end
-  def kyudan_rating()
-    return ::Glicko::get_kyudan_rating(Player.new(nil, @elo))
+  def kyudan=(kyudan)
+    if kyudan < KD_FIVE_KYU
+      @elo = (kyudan - KD_FIVE_KYU)*KGS_KYU_TRANSFORM + FIVE_KYU
+    elsif kyudan > KD_TWO_DAN
+      @elo = (kyudan - KD_TWO_DAN )*KGS_DAN_TRANSFORM + TWO_DAN
+    else
+      @elo = ((A*kyudan+B)**2.0 - B**2.0)/(2.0*A)
+    end
+    return self
+  end
+  def aga_rating=(aga_rating)
+    raise WhrError, "Illegal aga_rating #{aga_rating}" unless aga_rating.abs >= 1.0  # Ratings in (-1.0,1.0) are illegal
+    self.kyudan = aga_rating < 0.0 ? aga_rating + 1.0 : aga_rating - 1.0   # Close the (-1.0,1.0) gap
+    return self
   end
 end
+
+class Rating_delta
+  def initialize(r1, r2)
+    @r1 = r1
+    @r2 = r2
+  end
+  def gamma()  return 10**((@r1.elo - @r2.elo)/400.0) end
+  def elo()    return @r1.elo    - @r2.elo end
+  def kyudan() return @r1.kyudan - @r2.kyudan end
+end
+
 
 # Each player has a list of these objects, one for each day the player has games
 class PlayerDay
@@ -45,6 +91,7 @@ class PlayerDay
     @wins     = 0.0
     @player   = player
   end
+  def rating() return @r.elo end
   def num_games()
     return @games.length
   end
@@ -53,6 +100,7 @@ class PlayerDay
     return @wins / @games.length
   end
 end
+
 
 class WHR_Player
   attr_accessor :vpd, :name, :prior_initialized, :num_win, :num_games, :anchor_R, :prior_games
@@ -84,8 +132,8 @@ class WHR_Player
   end
   def add_prior(day)
     # Add two virtual games against the :prior_anchor on the first day
-    @prior_games = [Game.new(day, self, ::PDB[:prior_anchor], self                , WHR::PRIOR_WEIGHT),
-                    Game.new(day, self, ::PDB[:prior_anchor], ::PDB[:prior_anchor], WHR::PRIOR_WEIGHT)]
+    @prior_games = [Game.new(day, self, ::PDB[:prior_anchor], "aga", 0, 7.5, self                , WHR::PRIOR_WEIGHT),
+                    Game.new(day, self, ::PDB[:prior_anchor], "aga", 0, 7.5, ::PDB[:prior_anchor], WHR::PRIOR_WEIGHT)]
     for game in @prior_games
       # Use the first vpd for each player
       # It's a bit strange to use only first vpd for the :prior_anchor, 
@@ -99,7 +147,7 @@ class WHR_Player
   end
   def add_game(game)
     if @vpd == [] or @vpd[-1].day != game.day
-      if @name[0].class != Symbol or @vpd == []  # Only use one vpd for special Symbol players
+      if @name[0].class != Symbol or @anchor_R or @vpd == []  # Only use one vpd for special Symbol players
         self.add_new_vpd(game.day)
       end
     end
@@ -136,20 +184,30 @@ class WHR_Player
     return Rating.new(-1.0) if @vpd == []
     return @vpd[-1].r
   end
+  def r() return rating() end
 end
 
 
 class Game
+  EVEN_KOMI = { "aga" => 7, "jpn" => 6 }    # even komi, after doing floor()
   attr_accessor :day, :white_player, :black_player, :winner, :weight, :black_player_vpd, :white_player_vpd
-  def initialize(day, white_player, black_player, winner, weight=1.0)
+  attr_accessor :rules, :handi, :komi
+  def self.new_even(day, white_player, black_player, winner, weight=1.0)
+     return Game.new(day, white_player, black_player, "aga", 0, 7.5, winner, weight)
+  end
+  def initialize(day, white_player, black_player, rules, handi, komi, winner, weight=1.0)
      raise "Invalid winner" if winner != white_player and winner != black_player
      @day          = day
      @white_player = white_player
      @black_player = black_player
+     @rules        = rules
+     @handi        = handi
+     @komi         = komi.floor
      @winner       = winner
      @weight       = weight
      @black_player_vpd = nil   # These are set later when added into the database
      @white_player_vpd = nil
+     raise WhrError, "Handi=1 is illegal" if @handi == 1
   end
   def get_weight(curr_player)
     opp_vpd = self.get_opponent_vpd(curr_player)
@@ -169,6 +227,19 @@ class Game
   def this_player_won(player)
     return player == @winner
   end
+  def handi_komi_advantage(player)
+    even_komi = EVEN_KOMI[@rules]
+    handi = @handi
+    handi -= 1 if @handi > 0
+    hka = handi + (even_komi-@komi)/(even_komi*2.0)
+    avg_kyudan = (@white_player_vpd.r.kyudan + @black_player_vpd.r.kyudan) / 2.0
+    r1 = Rating.new_kyudan(avg_kyudan + hka*0.5)
+    r2 = Rating.new_kyudan(avg_kyudan - hka*0.5)
+    rating_delta = player == @white_player ? Rating_delta.new(r1, r2) : Rating_delta.new(r2, r1)
+    #puts "hka handi=%f komi=%f hka=%f avg=%f r1=%f r2=%f" % [handi, @komi, hka, avg_kyudan, r1.kyudan, r2.kyudan]
+    return rating_delta
+  end
+
   def tostring()
     if @winner == @white_player
       s = "%s (%0.0f) > %s (%0.0f)" % [
@@ -219,7 +290,9 @@ def self.mm_one_vpd(curr_player, dayidx)
   for game in curr_player_vpd.games + prior_games
     opp_vpd = game.get_opponent_vpd(curr_player)
     weight = game.get_weight(curr_player)
-    div += weight / (curr_player_vpd.r.gamma + opp_vpd.r.gamma)
+    hka = game.handi_komi_advantage(curr_player)
+    #puts "hka=%f %f" % [hka.gamma, hka.kyudan]
+    div += weight / (curr_player_vpd.r.gamma + opp_vpd.r.gamma*hka.gamma)
     wins += weight if game.winner == curr_player
   end
   return wins/div
@@ -271,7 +344,7 @@ def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
     end
     break if maxchange < MMITER_CHANGE_LIMIT
   end
-  i>1 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+  i>5 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
 end
 
 
@@ -338,11 +411,11 @@ def self.print_sorted_PDB()
 end
 
 def self.print_constants()
-  puts "PRIOR_WEIGHT       =%f" % PRIOR_WEIGHT        
-  puts "MMITER_CHANGE_LIMIT=%f" % MMITER_CHANGE_LIMIT 
-  puts "LINK_STRENGTH      =%d" % LINK_STRENGTH       
-  puts "MIN_LINK_STRENGTH  =%f" % MIN_LINK_STRENGTH   
-  puts "MMITER_TURN_LIMIT  =%d" % MMITER_TURN_LIMIT   
+  puts "PRIOR_WEIGHT        = %f" % PRIOR_WEIGHT        
+  puts "MMITER_CHANGE_LIMIT = %f" % MMITER_CHANGE_LIMIT 
+  puts "LINK_STRENGTH       = %d" % LINK_STRENGTH       
+  puts "MIN_LINK_STRENGTH   = %f" % MIN_LINK_STRENGTH   
+  puts "MMITER_TURN_LIMIT   = %d" % MMITER_TURN_LIMIT   
 end
 
 end  # Module WHR

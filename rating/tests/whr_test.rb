@@ -138,8 +138,8 @@ test "Equal wins" do
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w))
       end
       WHR::mm_iterate(10)
-      diff = plr_w.r.kyudan - plr_b.r.kyudan - Glicko::advantage_in_stones(handi, komi, 7.5)
-      puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Glicko::advantage_in_stones(handi, komi, 7.5)]
+      diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
+      puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
      #assert (diff.abs < 0.2)              # Ratings should almost match the handicap advantage
      #assert (plr_w.rd == Glicko::MIN_RD)  # rd should be smallest value with so many games
      #assert (plr_b.rd == Glicko::MIN_RD)

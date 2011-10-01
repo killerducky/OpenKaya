@@ -1,13 +1,9 @@
 require 'date'
-require File.expand_path("glicko", File.dirname(__FILE__))
 require File.expand_path("../system/", File.dirname(__FILE__))
 
 # WHR requires a lot of state for each player
 # Here are some classes to hold that state
 # Actual WHR module below
-
-# TODO:
-# Dependency on glicko is shady, especially constructing temp Player classes that glicko uses
 
 class WhrError < StandardError; end
 
@@ -20,8 +16,8 @@ class Rating
   KD_TWO_DAN  =  1.0         # Weakest   2d on the kyudan scale
   A = (KGS_DAN_TRANSFORM - KGS_KYU_TRANSFORM) / (KD_TWO_DAN - KD_FIVE_KYU) # ~ 17.4    Intermediate constant for conversions
   B = KGS_KYU_TRANSFORM - KD_FIVE_KYU*A                                    # ~ 208.6   Intermediate constant for conversions
-  FIVE_KYU = (A/2.0)*((KD_FIVE_KYU)**2) + (B*KD_FIVE_KYU)    # ~ 695.2 -- Glicko rating of the strongest 5k
-  TWO_DAN  = (A/2.0)*((KD_TWO_DAN )**2) + (B*KD_TWO_DAN )    # ~ 217.3 -- Glicko rating of the weakest 2d
+  FIVE_KYU = (A/2.0)*((KD_FIVE_KYU)**2) + (B*KD_FIVE_KYU)    # ~ 695.2 -- Elo rating of the strongest 5k
+  TWO_DAN  = (A/2.0)*((KD_TWO_DAN )**2) + (B*KD_TWO_DAN )    # ~ 217.3 -- Elo rating of the weakest 2d
   attr_accessor :elo
   def self.new_aga_rating(aga_rating)
     r = Rating.new()
@@ -32,6 +28,13 @@ class Rating
     r = Rating.new()
     r.kyudan = kyudan
     return r
+  end
+  def self.advantage_in_stones(handi, komi, even_komi)
+    raise WhrError, "Handi=1 is illegal" if handi == 1
+    komi = komi.floor
+    even_komi = even_komi.floor
+    handi -= 1 if handi > 0
+    return handi + (even_komi-komi)/(even_komi*2.0)
   end
   def initialize(elo=nil)
     @elo = elo
@@ -228,10 +231,7 @@ class Game
     return player == @winner
   end
   def handi_komi_advantage(player)
-    even_komi = EVEN_KOMI[@rules]
-    handi = @handi
-    handi -= 1 if @handi > 0
-    hka = handi + (even_komi-@komi)/(even_komi*2.0)
+    hka = Rating.advantage_in_stones(@handi, @komi, EVEN_KOMI[@rules])
     avg_kyudan = (@white_player_vpd.r.kyudan + @black_player_vpd.r.kyudan) / 2.0
     r1 = Rating.new_kyudan(avg_kyudan + hka*0.5)
     r2 = Rating.new_kyudan(avg_kyudan - hka*0.5)

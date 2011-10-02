@@ -91,12 +91,13 @@ end
 
 
 # Each player has a list of these objects, one for each day the player has games
+# initial_r_guess is just an optimization to help the algorithm converge faster
 class PlayerDay
   attr_accessor :day, :games, :r, :wins, :player
-  def initialize(day, player)
+  def initialize(day, player, initial_r_guess)
     @day = day
     @games    = []       # list of games
-    @r        = Rating.new(0.0)
+    @r        = initial_r_guess ? initial_r_guess : Rating.new(0.0)
     @wins     = 0.0
     @player   = player
   end
@@ -133,11 +134,11 @@ class WHR_Player
     end
     raise "Day %d not found in player %s" % day, @name
   end
-  def add_new_vpd(day)
+  def add_new_vpd(day, initial_r_guess)
     if (@vpd != [])
       raise "Days assumed to be chronological" unless @vpd[-1].day < day
     end
-    @vpd.push(PlayerDay.new(day, self))
+    @vpd.push(PlayerDay.new(day, self, initial_r_guess))
     @vpd[-1].r = anchor_R() if @anchor_R
     # Important: Code relies on using the same anchor_R again, so you can change just that one.
     # Also right now anchors only have one VPD anyways.
@@ -151,7 +152,7 @@ class WHR_Player
       # It's a bit strange to use only first vpd for the :prior_anchor,
       #   but it doesn't matter and it's easier
       if ::PDB[:prior_anchor].vpd == []
-         ::PDB[:prior_anchor].add_new_vpd(day)
+         ::PDB[:prior_anchor].add_new_vpd(day, ::PDB[:prior_anchor].anchor_r.dup)
       end
       game.white_player_vpd = @vpd[0]
       game.black_player_vpd = ::PDB[:prior_anchor].vpd[0]
@@ -160,7 +161,10 @@ class WHR_Player
   def add_game(game)
     if @vpd == [] or @vpd[-1].day != game.day
       if @name[0].class != Symbol or @anchor_R or @vpd == []  # Only use one vpd for special Symbol players
-        self.add_new_vpd(game.day)
+        # Initial Guess same rating as previous vpd if it exists,
+        # Otherwise initial guess is opponent's rating
+        initial_r_guess = @vpd != [] ? @vpd[-1].r.dup : game.get_opponent(self).rating.dup
+        self.add_new_vpd(game.day, initial_r_guess)
       end
     end
     if not @prior_initialized

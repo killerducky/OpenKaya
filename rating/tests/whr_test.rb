@@ -13,7 +13,7 @@ test "win_ratio" do
   puts "win_ratio"
   date = DateTime.parse("2011-09-29")
   init_aga_rating = -25
-  for win_ratio in (2..9)
+  for win_ratio in (1..9)
   for stronger in [:black, :white]
     white = PDB["w"] = WHR_Player.new("w", Rating.new_aga_rating(init_aga_rating))
     black = PDB["b"] = WHR_Player.new("b")
@@ -25,6 +25,7 @@ test "win_ratio" do
       end
       WHR::add_game(Game.new_even(date, white, black, stronger==:black ? white : black),0)
       WHR::mm_iterate(1)
+      puts black.tostring()
       date += 1
     end
     WHR::mm_iterate()

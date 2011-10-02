@@ -9,8 +9,8 @@ WHR::print_constants()
 
 test "win_ratio" do
   PDB.clear  # Reset PDB each test
-  #puts
-  #puts "win_ratio"
+  puts
+  puts "win_ratio"
   date = DateTime.parse("2011-09-29")
   init_aga_rating = -25
   for win_ratio in (2..9)
@@ -24,17 +24,20 @@ test "win_ratio" do
         WHR::add_game(Game.new_even(date, white, black, stronger==:black ? black : white),0)
       end
       WHR::add_game(Game.new_even(date, white, black, stronger==:black ? white : black),0)
+      WHR::mm_iterate(1)
+      date += 1
     end
     WHR::mm_iterate()
+    puts black.tostring(1)
     ratio = white.rating.gamma / black.rating.gamma
     ratio = 1/ratio if stronger == :black
     ratio_of_ratio  = ratio/win_ratio
-    #puts "stronger=%s win_ratio=%f ratio=%f 1/ratio=%f ratio_of_ratio=%f" % [stronger, win_ratio, ratio, 1/ratio, ratio_of_ratio]
+    puts "stronger=%s win_ratio=%f ratio=%f 1/ratio=%f ratio_of_ratio=%f" % [stronger, win_ratio, ratio, 1/ratio, ratio_of_ratio]
     assert ((1.0 - ratio_of_ratio).abs < 0.1)
   end
   end
-  #puts
-  #puts "end win_ratio"
+  puts
+  puts "end win_ratio"
 end
 
 
@@ -144,7 +147,8 @@ test "Equal wins" do
         diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
         #puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
         assert (diff.abs < 0.05)             # Ratings should almost match the handicap advantage
-        gv[num_games] = WHR::compute_variance(plr_b)
+        tmp_vars = WHR::compute_variance(plr_b)
+        gv[num_games] = tmp_vars[-1].GV
         #puts "elo=%f num_games=%d gv=%f" % [plr_b.vpd[-1].r.elo, num_games, gv[num_games]]
         assert ((gv[num_games]-prev_gv[num_games]).abs < 0.01) if prev_gv[num_games]  # Variance should not depend on init_aga_rating, handi, or komi
         prev_gv[num_games] = gv[num_games]
@@ -152,6 +156,70 @@ test "Equal wins" do
     end
   end
   #puts
+end
+
+class Hash
+  def self.recursive
+    new { |hash, key| hash[key] = recursive }
+  end
+end
+
+test "Ratings response" do
+  puts
+  puts "Ratings response"
+  PREV_GAMES = 30
+  POST_GAMES = 30
+  #
+  # TODO: Measure rate that Variance decreases
+  # TODO: Make sure new player ratings move fast
+  # TODO: Make sure new players do not impact exisiting ones as much until they get more history
+  #
+  key_results = Hash.recursive
+  puts "New person winning 100%, all even games against solid opponents with same rating as the new person"
+  for init_aga_rating in [8.0, -8.0]
+    for days_rest in [0, 1, 7, 30]
+      PDB.clear  # Reset PDB each test
+      date = DateTime.parse("2011-09-24")
+      puts "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest}"
+     #puts "  #  newR   95%   newAGA    95%      dR  dKD  (1/dKD)"
+      puts "  #  newR  dKD  (1/dKD)"
+      plr_anchor = WHR_Player.new("anchor", Rating.new_aga_rating(init_aga_rating))
+      plr_b      = PDB["b"]      = WHR_Player.new("b")
+      plr_b.prior_initialized  = true
+      # At first they were even
+      PREV_GAMES.times do
+        WHR::add_game(Game.new_even(date, plr_anchor, plr_b, plr_anchor),0)
+        date += days_rest
+        WHR::add_game(Game.new_even(date, plr_anchor, plr_b, plr_b ),0)
+        date += days_rest
+      end
+      WHR::mm_iterate()
+      for i in 1..POST_GAMES
+        prev_rating = plr_b.rating.dup
+        plr_anchor = WHR_Player.new("anchor", prev_rating.dup)  # Keep making new anchors to play against
+        # To avoid going across the weird 5k-2d transition area,
+        # do win streak for dans but loss streak for kyus
+        WHR::add_game(Game.new_even(date, plr_anchor, plr_b, init_aga_rating >= 0 ? plr_b : plr_anchor))
+        WHR::mm_iterate()
+        dKD = (plr_b.rating.kyudan - prev_rating.kyudan).abs
+        puts "%3d %6.2f  %4.2f (%4.1f)" % [i, plr_b.rating.kyudan, dKD, 1/dKD]
+        key_results[init_aga_rating][:dKD_init     ][days_rest] = dKD    if i==1
+        # Replace this with variance equivalent
+        #key_results[init_aga_rating][:numgame_minrd][days_rest] = i      if plr_b.rd==Glicko::MIN_RD and key_results[init_aga_rating][:numgame_minrd][days_rest] == {}
+        key_results[init_aga_rating][:dKD_final    ][days_rest] = dKD    if i==POST_GAMES
+        key_results[init_aga_rating][:dKD_inv_final][days_rest] = 1/dKD  if i==POST_GAMES
+        date += days_rest  # new person waits this many days before playing again
+      end
+      puts
+    end
+  end
+  for init_aga_rating,v in key_results.each
+    for k,v in v.each
+      for days_rest,v in v.each
+        print "%15s %4.1f %6.2f %6.2f\n" % [k, days_rest, init_aga_rating, v]
+      end
+    end
+  end
 end
 
 #win_ratio()

@@ -5,6 +5,12 @@ require File.expand_path("../system/", File.dirname(__FILE__))
 # Here are some classes to hold that state
 # Actual WHR module below
 
+#
+# TODO:
+# - Add ability to set an initial rank for a player
+#   (You can already sorta do this by maunally setting a different prior.)
+#
+
 class WhrError < StandardError; end
 
 # Abstract out what scale the ratings are on
@@ -110,13 +116,14 @@ class WHR_Player
   def initialize(name, anchor_R=nil)
     @vpd = []       # List of PlayerDay objects, must be in chronological order
     @name = name
-    @prior_initialized = false
     @num_win = 0
     @num_games = 0
     if anchor_R != nil
       @anchor_R = anchor_R.dup()   # Anchor player's rating
+      @prior_initialized = true    # Don't need a prior on anchors
     else
       @anchor_R = nil
+      @prior_initialized = false
     end
     @prior_games = []  # Virtual games on the first player day to avoid all wins / all losses spiraling
   end
@@ -131,7 +138,9 @@ class WHR_Player
       raise "Days assumed to be chronological" unless @vpd[-1].day < day
     end
     @vpd.push(PlayerDay.new(day, self))
-    @vpd[-1].r = @anchor_R.dup() if @anchor_R
+    @vpd[-1].r = anchor_R() if @anchor_R
+    # Important: Code relies on using the same anchor_R again, so you can change just that one.
+    # Also right now anchors only have one VPD anyways.
   end
   def add_prior(day)
     # Add two virtual games against the :prior_anchor on the first day
@@ -139,7 +148,7 @@ class WHR_Player
                     Game.new(day, self, ::PDB[:prior_anchor], "aga", 0, 7.5, ::PDB[:prior_anchor], WHR::PRIOR_WEIGHT)]
     for game in @prior_games
       # Use the first vpd for each player
-      # It's a bit strange to use only first vpd for the :prior_anchor, 
+      # It's a bit strange to use only first vpd for the :prior_anchor,
       #   but it doesn't matter and it's easier
       if ::PDB[:prior_anchor].vpd == []
          ::PDB[:prior_anchor].add_new_vpd(day)
@@ -168,11 +177,11 @@ class WHR_Player
   end
   def tostring(verbose=0)
     s = @name
+    s += verbose > 0 ? "\n" : " "
     for vpd in @vpd
-      s += "\n" if verbose > 0
       s += "%0.0f" % [vpd.r.elo]
       if verbose >= 1
-        s += " day=%s num_games=%d winrate=%0.3f" % [vpd.day, vpd.num_games(), vpd.winrate()]
+        s += " day=%04d-%02d-%02d num_games=%d winrate=%0.3f" % [vpd.day.year, vpd.day.month, vpd.day.day, vpd.num_games(), vpd.winrate()]
         if verbose >= 2
           for game in vpd.games
             if game.winner == self then s += " W"
@@ -180,6 +189,7 @@ class WHR_Player
           end
         end
       end
+      s += verbose > 0 ? "\n" : " "
     end
     return s
   end
@@ -256,7 +266,7 @@ class Game
 end
 
 class Tmp_hessian_vars
-  attr_accessor :b, :d, :h, :G, :dprime, :GV
+  attr_accessor :b, :d, :h, :G, :dprime, :GV, :x
   def initialize()
     @b = 0.0
     @d = 0.0
@@ -264,15 +274,17 @@ class Tmp_hessian_vars
     @G = 0.0
     @dprime = 0.0
     @GV = 0.0
+    @x = 0.0
   end
 end
-            
+
 module WHR
 
 PRIOR_WEIGHT  = 2.0
-MMITER_CHANGE_LIMIT = 1.0
-LINK_STRENGTH = 2000.0        # draws/days
-MIN_LINK_STRENGTH = 20.0      # Prevent weird things happening in weird cases (player doesn't play for a long time)
+MMITER_CHANGE_LIMIT = 0.1
+MAX_LINK_STRENGTH = 200.0     # draws/days
+MIN_LINK_STRENGTH = 4.0       # Prevent weird things happening in weird cases (player doesn't play for a long time)
+LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*7.0  # First 7 days don't actually reduce max link strength
 MMITER_TURN_LIMIT = 3000      # Quit if we do many loops without hitting MMITER_CHANGE_LIMIT
 HESSIAN_EPSILON = 0.0         # TODO make sure zero is ok, original was 0.1
 START_TIME = DateTime.now()   # For performance tracking only
@@ -281,8 +293,9 @@ DEBUG = false
 def self.tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
 def self.virtual_draw_weight(day1, day2)
-  weight = LINK_STRENGTH / (day1 - day2).abs
-  weight = MIN_LINK_STRENGTH if weight < MIN_LINK_STRENGTH
+  weight = LINK_STRENGTH_SCALE / (day1 - day2).abs
+  weight = [weight, MAX_LINK_STRENGTH].min
+  weight = [MIN_LINK_STRENGTH, weight].max
   return weight
 end
 
@@ -311,7 +324,7 @@ def self.mm_one_vpd(curr_player, dayidx)
   end
   return wins/div
 end
-      
+
 def self.find_upsets()
   for curr_player in ::PDB.values()
     next if curr_player.name[0].class == Symbol
@@ -358,7 +371,7 @@ def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
     end
     break if maxchange < MMITER_CHANGE_LIMIT
   end
-  #i and i>100 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+  i and i>100 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
 end
 
 
@@ -394,7 +407,7 @@ def self.compute_variance(player)
     # link to next playerday
     if i < player.vpd.length-1
       next_vpd = player.vpd[i+1]
-      virtual_wins = getVirtualWins(vpd, next_vpd)
+      virtual_wins = virtual_draw_weight(vpd.day, next_vpd.day)
       b = virtual_wins * 0.5
       g = ((next_vpd.r.gamma - vpd.r.gamma) / vpd.r.gamma) * virtual_wins * 0.5
       tmp_vars[i].b = b
@@ -402,7 +415,7 @@ def self.compute_variance(player)
       tmp_vars[i].h -= b
       tmp_vars[i].G += g
 
-      a = b / tmp_vars[i].d  
+      a = b / tmp_vars[i].d
       tmp_vars[i+1].d = -b - a * b
       tmp_vars[i+1].h = -b
       tmp_vars[i+1].G = -g - a * tmp_vars[i].G
@@ -424,7 +437,35 @@ def self.compute_variance(player)
     tmp_vars[i].GV = tmp_vars[i+1].dprime / (tmp_vars[i].b * tmp_vars[i].b - tmp_vars[i].d * tmp_vars[i+1].dprime)
     i -= 1
   end
-  return tmp_vars[-1].GV / Rating::Q  # Return in Elo -- the calculation gives natural scale instead
+  #return tmp_vars[-1].GV / Rating::Q  # Return in Elo -- the calculation gives natural scale instead
+  return tmp_vars
+end
+
+# Apply Newton's method to update all the player-days of one player
+def self.newton(player)
+  return if player.vpd.length == 0   # skip players with no games
+  return if player.anchor_R        # skip anchors
+  debug = true
+  tmp_vars = compute_variance(player)
+  i = player.vpd.length-1
+  vpd = player.vpd[i]
+ #vpd.G         /= vpd.d
+  tmp_vars[i].x = tmp_vars[i].G /  tmp_vars[i].d
+  puts "Before Newton day=%04d-%02d-%02d" % [vpd.day.year, vpd.day.month, vpd.day.day]
+  puts "vpd.gamma=%f x=%f" % [vpd.r.gamma, tmp_vars[i].x]
+  puts player.tostring(1)
+  vpd.r.gamma *= Math.exp(-tmp_vars[i].x)
+  i -= 1
+  while (i >= 0)
+    vpd = player.vpd[i]
+    next_vpd = player.vpd[i+1]
+   #tmp_vars[i].G = (tmp_vars[i].G - tmp_vars[i].b * tmp_vars[i].G) / tmp_vars[i].d
+    tmp_vars[i].x = (tmp_vars[i].G - tmp_vars[i].b * tmp_vars[i].x) / tmp_vars[i].d
+    puts "Before Newton day=%04d-%02d-%02d" % [vpd.day.year, vpd.day.month, vpd.day.day]
+    player.tostring(1)
+    vpd.r.gamma *= Math.exp(-tmp_vars[i].x)
+    i -= 1
+  end
 end
 
 
@@ -473,7 +514,7 @@ def self.print_sorted_PDB()
   new_players = []
   i = 1
   # TODO implement <=> for rating class
-  for name in ::PDB.keys().sort {|a,b| (a.class==Symbol or b.class==Symbol) ? 0 : PDB[b].rating.elo <=> PDB[a].rating.elo}  
+  for name in ::PDB.keys().sort {|a,b| (a.class==Symbol or b.class==Symbol) ? 0 : PDB[b].rating.elo <=> PDB[a].rating.elo}
     player = ::PDB[name]
     num_games = player.num_games
     s = "%15s #%3d %6.0f %6.2f num_games=%d" % [name, i, player.rating.elo, player.rating.aga_rating, num_games]
@@ -491,11 +532,12 @@ def self.print_sorted_PDB()
 end
 
 def self.print_constants()
-  puts "PRIOR_WEIGHT        = %f" % PRIOR_WEIGHT        
-  puts "MMITER_CHANGE_LIMIT = %f" % MMITER_CHANGE_LIMIT 
-  puts "LINK_STRENGTH       = %d" % LINK_STRENGTH       
-  puts "MIN_LINK_STRENGTH   = %f" % MIN_LINK_STRENGTH   
-  puts "MMITER_TURN_LIMIT   = %d" % MMITER_TURN_LIMIT   
+  puts "PRIOR_WEIGHT        = %f" % PRIOR_WEIGHT
+  puts "MMITER_CHANGE_LIMIT = %f" % MMITER_CHANGE_LIMIT
+  puts "MAX_LINK_STRENGTH   = %f" % MAX_LINK_STRENGTH
+  puts "MIN_LINK_STRENGTH   = %f" % MIN_LINK_STRENGTH
+  puts "LINK_STRENGTH_SCALE = %f" % LINK_STRENGTH_SCALE
+  puts "MMITER_TURN_LIMIT   = %d" % MMITER_TURN_LIMIT
 end
 
 end  # Module WHR

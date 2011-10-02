@@ -1,5 +1,4 @@
 require 'cutest'
-require File.expand_path("../strategies/glicko", File.dirname(__FILE__))
 require File.expand_path("../strategies/whr", File.dirname(__FILE__))
 require File.expand_path("../system", File.dirname(__FILE__))
 
@@ -8,29 +7,34 @@ EVEN_GAME = ["aga", 0, 7.5]
 
 WHR::print_constants()
 
-def win_ratio()
+test "win_ratio" do
   PDB.clear  # Reset PDB each test
-  PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new(2000.0))   # Need to move to whr.rb
-  puts
-  puts "win_ratio"
+  #puts
+  #puts "win_ratio"
   date = DateTime.parse("2011-09-29")
-  weight = 10
-  for win_ratio in (1..9)
-    white = PDB["w#{win_ratio}"] = WHR_Player.new("w#{win_ratio}")
-    black = PDB["b#{win_ratio}"] = WHR_Player.new("b#{win_ratio}")
+  init_aga_rating = -25
+  for win_ratio in (2..9)
+  for stronger in [:black, :white]
+    white = PDB["w"] = WHR_Player.new("w", Rating.new_aga_rating(init_aga_rating))
+    black = PDB["b"] = WHR_Player.new("b")
+    white.prior_initialized = true
+    black.prior_initialized = true
     3.times do
       win_ratio.times do
-        WHR::add_game(Game.new_even(date, white, black, white, weight))
+        WHR::add_game(Game.new_even(date, white, black, stronger==:black ? black : white),0)
       end
-      WHR::add_game(Game.new_even(date, white, black, black, weight))
+      WHR::add_game(Game.new_even(date, white, black, stronger==:black ? white : black),0)
     end
-    WHR::mm_iterate
-    diff = white.rating.kyudan - black.rating.kyudan
-    puts "win_ratio=%d diff=%0.2f  <%6.0f %6.2f>  <%6.0f %6.2f>" % [win_ratio, diff, white.rating.elo, white.rating.aga_rating, black.rating.elo, black.rating.aga_rating]
+    WHR::mm_iterate()
+    ratio = white.rating.gamma / black.rating.gamma
+    ratio = 1/ratio if stronger == :black
+    ratio_of_ratio  = ratio/win_ratio
+    #puts "stronger=%s win_ratio=%f ratio=%f 1/ratio=%f ratio_of_ratio=%f" % [stronger, win_ratio, ratio, 1/ratio, ratio_of_ratio]
+    assert ((1.0 - ratio_of_ratio).abs < 0.1)
   end
-  puts
-  #WHR::print_verbose_PDB()
-  WHR::print_sorted_PDB()
+  end
+  #puts
+  #puts "end win_ratio"
 end
 
 
@@ -116,36 +120,38 @@ def multi_test(test)
       puts "gamenum=%d R=%0.2f" % [gamenum, rating[gamenum]]
     end
   end
-  WHR::mm_iterate
+  WHR::mm_iterate()
   WHR::print_verbose_PDB(1)
   WHR::print_sorted_PDB()
 end
 
 test "Equal wins" do
-  puts
-  puts "Equal wins"
+  #puts
+  #puts "Equal wins"
   PDB.clear  # Reset PDB each test
-  PDB[:prior_anchor]  = WHR_Player.new(:prior_anchor, Rating.new(0))   # Need to move to whr.rb
   date = DateTime.parse("2011-10-01")
-  for init_aga_rating in [-25, -1, 5]
+  prev_gv = gv = {}
+  for init_aga_rating in [-25.5, -1.5, 5.5]
     for (handi, komi) in [[0, 7.5], [0, 0.5], [0, -6.5], [2, 0.5], [6, 0.5]]
       plr_w = PDB[:w ] = WHR_Player.new(:w , Rating.new_aga_rating(init_aga_rating))
       plr_b = PDB["b"] = WHR_Player.new("b")
-      plr_b.prior_initialized = true
-      tmp_game = nil
-      10.times do
-        WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_b))
-        WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w))
+      plr_w.prior_initialized = true  # Bypass prior logic
+      plr_b.prior_initialized = true  # Bypass prior logic
+      for num_games in (1..3)
+        WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_b),0)
+        WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w),0)
+        WHR::mm_iterate()
+        diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
+        #puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
+        assert (diff.abs < 0.05)             # Ratings should almost match the handicap advantage
+        gv[num_games] = WHR::compute_variance(plr_b)
+        #puts "elo=%f num_games=%d gv=%f" % [plr_b.vpd[-1].r.elo, num_games, gv[num_games]]
+        assert ((gv[num_games]-prev_gv[num_games]).abs < 0.01) if prev_gv[num_games]  # Variance should not depend on init_aga_rating, handi, or komi
+        prev_gv[num_games] = gv[num_games]
       end
-      WHR::mm_iterate(10)
-      diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
-      puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
-     #assert (diff.abs < 0.2)              # Ratings should almost match the handicap advantage
-     #assert (plr_w.rd == Glicko::MIN_RD)  # rd should be smallest value with so many games
-     #assert (plr_b.rd == Glicko::MIN_RD)
     end
   end
-  puts
+  #puts
 end
 
 #win_ratio()

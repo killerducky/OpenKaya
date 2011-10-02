@@ -110,7 +110,7 @@ test "winratio test" do
   system = System.new(Glicko)
   for init_aga_rating in [-25, -1, 5]
     (handi, komi) = [0, 7.5]
-    for win_ratio in 2..9
+    for win_ratio in 1..9
       plr_w = system.players["w"] = Glicko::set_aga_rating(Player.new("w", nil), init_aga_rating)
       plr_b = system.players["b"] = Glicko::set_aga_rating(Player.new("b", nil), init_aga_rating)
       80.times do

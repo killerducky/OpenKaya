@@ -36,7 +36,7 @@ class Rating
     handi -= 1 if handi > 0
     return handi + (even_komi-komi)/(even_komi*2.0)
   end
-  def initialize(elo=nil)
+  def initialize(elo=0)
     @elo = elo
     return self
   end
@@ -170,7 +170,7 @@ class WHR_Player
     s = @name
     for vpd in @vpd
       s += "\n" if verbose > 0
-      s += vpd.r.tostring()
+      s += "%0.0f" % [vpd.r.elo]
       if verbose >= 1
         s += " day=%s num_games=%d winrate=%0.3f" % [vpd.day, vpd.num_games(), vpd.winrate()]
         if verbose >= 2
@@ -184,7 +184,7 @@ class WHR_Player
     return s
   end
   def rating()
-    return Rating.new(-1.0) if @vpd == []
+    return Rating.new(-1.0) if @vpd == []   # !! TODO should probably return nil
     return @vpd[-1].r
   end
   def r() return rating() end
@@ -254,6 +254,18 @@ class Game
     return s
   end
 end
+
+class Tmp_hessian_vars
+  attr_accessor :b, :d, :h, :G, :dprime, :GV
+  def initialize()
+    @b = 0.0
+    @d = 0.0
+    @h = 0.0
+    @G = 0.0
+    @dprime = 0.0
+    @GV = 0.0
+  end
+end
             
 module WHR
 
@@ -261,8 +273,10 @@ PRIOR_WEIGHT  = 2.0
 MMITER_CHANGE_LIMIT = 1.0
 LINK_STRENGTH = 2000.0        # draws/days
 MIN_LINK_STRENGTH = 20.0      # Prevent weird things happening in weird cases (player doesn't play for a long time)
-MMITER_TURN_LIMIT = 3000
+MMITER_TURN_LIMIT = 3000      # Quit if we do many loops without hitting MMITER_CHANGE_LIMIT
+HESSIAN_EPSILON = 0.0         # TODO make sure zero is ok, original was 0.1
 START_TIME = DateTime.now()   # For performance tracking only
+DEBUG = false
 
 def self.tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
@@ -291,8 +305,8 @@ def self.mm_one_vpd(curr_player, dayidx)
     opp_vpd = game.get_opponent_vpd(curr_player)
     weight = game.get_weight(curr_player)
     hka = game.handi_komi_advantage(curr_player)
-    #puts "hka=%f %f" % [hka.gamma, hka.kyudan]
-    div += weight / (curr_player_vpd.r.gamma + opp_vpd.r.gamma*hka.gamma)
+    opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
+    div += weight / (curr_player_vpd.r.gamma + opp_adjusted_r.gamma)
     wins += weight if game.winner == curr_player
   end
   return wins/div
@@ -315,7 +329,7 @@ end
 
 def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
   players = ::PDB.values() if players == nil # By default do all players
-  for i in (0..turn_limit)
+  for i in (1..turn_limit)
     maxchange = 0
     for curr_player in players
       if curr_player.anchor_R != nil
@@ -339,19 +353,85 @@ def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
         curr_player_vpd.r = new_rating
       end
     end
-    if i>1 and i % 10 == 0
-      puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+    if i>1 and i % 100 == 0
+      #puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
     end
     break if maxchange < MMITER_CHANGE_LIMIT
   end
-  i>5 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+  #i and i>100 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
 end
 
 
-def self.add_game(game)
+# Compute Variance
+def self.compute_variance(player)
+  return if player.vpd.length == 0 # skip players with no games
+  tmp_vars = Array.new(player.vpd.length, Tmp_hessian_vars.new())
+
+  #
+  # Compute Hessian
+  #
+
+  # loop over playerdays of this player
+  for i in (0..player.vpd.length-1)
+    vpd = player.vpd[i]
+    h = 0.0
+    g = 0.0
+    prior_games = []
+    prior_games = player.prior_games if i == 0
+    for game in vpd.games + prior_games
+      opp_vpd = game.get_opponent_vpd(player)
+      weight = game.get_weight(player)
+      hka = game.handi_komi_advantage(player)
+      opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
+      inv = weight / (vpd.r.gamma + opp_adjusted_r.gamma)
+      g += inv
+      h += opp_adjusted_r.gamma * inv * inv   # opponent_gamma / ( my_gamma + opponent_gamma)^2
+    end
+    # store h and g
+    tmp_vars[i].d -= h * vpd.r.gamma + HESSIAN_EPSILON
+    tmp_vars[i].h -= h * vpd.r.gamma + HESSIAN_EPSILON
+    tmp_vars[i].G += vpd.wins - vpd.r.gamma * g
+    # link to next playerday
+    if i < player.vpd.length-1
+      next_vpd = player.vpd[i+1]
+      virtual_wins = getVirtualWins(vpd, next_vpd)
+      b = virtual_wins * 0.5
+      g = ((next_vpd.r.gamma - vpd.r.gamma) / vpd.r.gamma) * virtual_wins * 0.5
+      tmp_vars[i].b = b
+      tmp_vars[i].d -= b
+      tmp_vars[i].h -= b
+      tmp_vars[i].G += g
+
+      a = b / tmp_vars[i].d  
+      tmp_vars[i+1].d = -b - a * b
+      tmp_vars[i+1].h = -b
+      tmp_vars[i+1].G = -g - a * tmp_vars[i].G
+    end
+  end
+
+  #
+  # Compute Variance
+  #
+  vpd = player.vpd
+  i = vpd.length-1
+  tmp_vars[i].dprime = tmp_vars[i].h    # UL-decomposition
+  tmp_vars[i].GV = -1 / tmp_vars[i].d
+
+  # Don't really need the rest because I really only want to know GV of the player at the end for now
+  i -= 1
+  while (i >= 0)
+    tmp_vars[i].dprime = tmp_vars[i].h - tmp_vars[i].b * tmp_vars[i].b / tmp_vars[i+1].dprime
+    tmp_vars[i].GV = tmp_vars[i+1].dprime / (tmp_vars[i].b * tmp_vars[i].b - tmp_vars[i].d * tmp_vars[i+1].dprime)
+    i -= 1
+  end
+  return tmp_vars[-1].GV / Rating::Q  # Return in Elo -- the calculation gives natural scale instead
+end
+
+
+def self.add_game(game, iterations=1)
   game.white_player_vpd = game.white_player.add_game(game)
   game.black_player_vpd = game.black_player.add_game(game)
-  mm_iterate(1, [game.white_player, game.black_player])
+  mm_iterate(iterations, [game.white_player, game.black_player]) if iterations>0
 end
 
 
@@ -393,7 +473,7 @@ def self.print_sorted_PDB()
   new_players = []
   i = 1
   # TODO implement <=> for rating class
-  for name in ::PDB.keys().sort {|a,b| PDB[b].rating.elo <=> PDB[a].rating.elo}  
+  for name in ::PDB.keys().sort {|a,b| (a.class==Symbol or b.class==Symbol) ? 0 : PDB[b].rating.elo <=> PDB[a].rating.elo}  
     player = ::PDB[name]
     num_games = player.num_games
     s = "%15s #%3d %6.0f %6.2f num_games=%d" % [name, i, player.rating.elo, player.rating.aga_rating, num_games]

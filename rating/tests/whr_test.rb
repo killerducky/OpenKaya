@@ -7,6 +7,52 @@ EVEN_GAME = ["aga", 0, 7.5]
 
 WHR::print_constants()
 
+test "strength spike" do
+  PDB.clear  # Reset PDB each test
+  date = DateTime.parse("2011-09-29")
+  init_aga_rating = 2
+  final_aga_rating = 50
+  num_games = 110
+  PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new_aga_rating(init_aga_rating))
+  p_init  = PDB["i"] = WHR_Player.new("i", Rating.new_aga_rating(init_aga_rating))
+  p_final = PDB["f"] = WHR_Player.new("f", Rating.new_aga_rating(final_aga_rating))
+  black = PDB["b"] = WHR_Player.new("b")
+  p_init.prior_initialized = true
+  p_final.prior_initialized = true
+  black.prior_initialized = true
+  day = 0
+  (num_games/2-2).times do
+    WHR::add_game(Game.new_even(date+day, p_init, black, p_init))
+    WHR::add_game(Game.new_even(date+day, p_init, black, black))
+  end
+  day = 10
+  (num_games/2+2).times do
+    WHR::add_game(Game.new_even(date+day, p_final, black, p_final))
+    WHR::add_game(Game.new_even(date+day, p_final, black, black))
+  end
+  puts WHR::tostring_now()
+  #10.times do
+  #  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  #  WHR::mm_iterate(1)
+  #  puts black.tostring()
+  #end
+  #puts WHR::tostring_now()
+  WHR::nmsimplex()
+  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  puts black.tostring()
+  puts p_init.tostring()
+  puts p_final.tostring()
+  puts "start mm_iterate=%s" % [WHR::tostring_now()]
+  WHR::mm_iterate()
+  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  puts black.tostring()
+  puts p_init.tostring()
+  puts p_final.tostring()
+  puts PDB[:prior_anchor].tostring()
+end
+
+assert(false)
+
 test "win_ratio" do
   PDB.clear  # Reset PDB each test
   puts
@@ -58,18 +104,6 @@ def multi_test(test)
     num_games.times do
       WHR::add_game(Game.new_even(date+day, PDB["yoyoma"], PDB[:high_rating], PDB["yoyoma"]))
       puts PDB["yoyoma"].tostring(rtype)
-    end
-  elsif (test[0] == "strength_spike")
-    day = 0
-    num_games = 110
-    (num_games/2-2).times do
-      WHR::add_game(Game.new_even(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB["yoyoma"]))
-      WHR::add_game(Game.new_even(date+day, PDB["yoyoma"], PDB[:mid_rating], PDB[:mid_rating]))
-    end
-    day = 100
-    (num_games/2+2).times do
-      WHR::add_game(Game.new_even(date+day, PDB['yoyoma'], PDB[:high_rating], PDB["yoyoma"]))
-      WHR::add_game(Game.new_even(date+day, PDB['yoyoma'], PDB[:high_rating], PDB[:high_rating]))
     end
   elsif (test[0] == "low_confidence_corner")
     day = 0
@@ -222,10 +256,6 @@ test "Ratings response" do
     end
   end
 end
-
-#win_ratio()
-
-#multi_test (["strength_spike"])
 
 #               prior         post
 #              gpd wr  break gpd wr

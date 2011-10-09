@@ -8,6 +8,7 @@ EVEN_GAME = ["aga", 0, 7.5]
 WHR::print_constants()
 
 test "strength spike" do
+  puts "strength spike"
   PDB.clear  # Reset PDB each test
   date = DateTime.parse("2011-09-29")
   init_aga_rating = 2
@@ -31,27 +32,24 @@ test "strength spike" do
     WHR::add_game(Game.new_even(date+day, p_final, black, black))
   end
   puts WHR::tostring_now()
-  #10.times do
-  #  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
-  #  WHR::mm_iterate(1)
-  #  puts black.tostring()
-  #end
-  #puts WHR::tostring_now()
+  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  WHR::print_verbose_pdb(1)
   WHR::nmsimplex()
+  #WHR::calc_ratings_fdf(9)
   puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
   puts black.tostring()
   puts p_init.tostring()
   puts p_final.tostring()
-  puts "start mm_iterate=%s" % [WHR::tostring_now()]
-  WHR::mm_iterate()
-  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
-  puts black.tostring()
-  puts p_init.tostring()
-  puts p_final.tostring()
-  puts PDB[:prior_anchor].tostring()
+  WHR::print_sorted_pdb()
+  WHR::print_verbose_pdb(1)
+  #puts "start mm_iterate=%s" % [WHR::tostring_now()]
+  #WHR::mm_iterate()
+  #puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  #puts black.tostring()
+  #puts p_init.tostring()
+  #puts p_final.tostring()
+  #puts PDB[:prior_anchor].tostring()
 end
-
-assert(false)
 
 test "win_ratio" do
   PDB.clear  # Reset PDB each test
@@ -70,12 +68,13 @@ test "win_ratio" do
         WHR::add_game(Game.new_even(date, white, black, stronger==:black ? black : white),0)
       end
       WHR::add_game(Game.new_even(date, white, black, stronger==:black ? white : black),0)
-      WHR::mm_iterate(1)
       puts black.tostring()
       date += 1
     end
-    WHR::mm_iterate()
+    WHR::nmsimplex
     puts black.tostring(1)
+    WHR::print_sorted_pdb()
+    WHR::print_verbose_pdb(1)
     ratio = white.rating.gamma / black.rating.gamma
     ratio = 1/ratio if stronger == :black
     ratio_of_ratio  = ratio/win_ratio
@@ -86,7 +85,6 @@ test "win_ratio" do
   puts
   puts "end win_ratio"
 end
-
 
 def multi_test(test)
   PDB.clear  # Reset PDB each test
@@ -158,14 +156,14 @@ def multi_test(test)
       puts "gamenum=%d R=%0.2f" % [gamenum, rating[gamenum]]
     end
   end
-  WHR::mm_iterate()
-  WHR::print_verbose_PDB(1)
-  WHR::print_sorted_PDB()
+  WHR::nmsimplex()
+  WHR::print_verbose_pdb(1)
+  WHR::print_sorted_pdb()
 end
 
 test "Equal wins" do
-  #puts
-  #puts "Equal wins"
+  puts
+  puts "Equal wins"
   PDB.clear  # Reset PDB each test
   date = DateTime.parse("2011-10-01")
   prev_gv = gv = {}
@@ -178,19 +176,20 @@ test "Equal wins" do
       for num_games in (1..3)
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_b),0)
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w),0)
-        WHR::mm_iterate()
+        WHR::nmsimplex()
         diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
-        #puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
+        puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
         assert (diff.abs < 0.05)             # Ratings should almost match the handicap advantage
-        tmp_vars = WHR::compute_variance(plr_b)
-        gv[num_games] = tmp_vars[-1].GV
-        #puts "elo=%f num_games=%d gv=%f" % [plr_b.vpd[-1].r.elo, num_games, gv[num_games]]
+        #tmp_vars = WHR::compute_variance(plr_b)
+        #gv[num_games] = tmp_vars[-1].GV
+        gv[num_games] = -1
+        puts "elo=%f num_games=%d gv=%f" % [plr_b.vpd[-1].r.elo, num_games, gv[num_games]]
         assert ((gv[num_games]-prev_gv[num_games]).abs < 0.01) if prev_gv[num_games]  # Variance should not depend on init_aga_rating, handi, or komi
         prev_gv[num_games] = gv[num_games]
       end
     end
   end
-  #puts
+  puts "end equal wins"
 end
 
 class Hash
@@ -202,8 +201,10 @@ end
 test "Ratings response" do
   puts
   puts "Ratings response"
-  PREV_GAMES = 30
-  POST_GAMES = 30
+  #PREV_GAMES = 30
+  #POST_GAMES = 30
+  PREV_GAMES = 5
+  POST_GAMES = 5
   #
   # TODO: Measure rate that Variance decreases
   # TODO: Make sure new player ratings move fast
@@ -218,24 +219,30 @@ test "Ratings response" do
       puts "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest}"
      #puts "  #  newR   95%   newAGA    95%      dR  dKD  (1/dKD)"
       puts "  #  newR  dKD  (1/dKD)"
-      plr_anchor = WHR_Player.new("anchor", Rating.new_aga_rating(init_aga_rating))
-      plr_b      = PDB["b"]      = WHR_Player.new("b")
+      plr_anchor = PDB[:anchor] = WHR_Player.new(:anchor, Rating.new_aga_rating(init_aga_rating))
+      plr_b      = PDB["b"]     = WHR_Player.new("b")
       plr_b.prior_initialized  = true
       # At first they were even
       PREV_GAMES.times do
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, plr_anchor),0)
-        date += days_rest
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, plr_b ),0)
         date += days_rest
       end
-      WHR::mm_iterate()
+      puts "nmsimplex on even games"
+      WHR::nmsimplex()
+      WHR::print_sorted_pdb()
+      WHR::print_verbose_pdb()
       for i in 1..POST_GAMES
         prev_rating = plr_b.rating.dup
-        plr_anchor = WHR_Player.new("anchor", prev_rating.dup)  # Keep making new anchors to play against
+	anchor_name = "anchor%d"%[i]
+        plr_anchor = WHR_Player.new(anchor_name, prev_rating.dup)  # Keep making new anchors to play against
+	PDB[anchor_name] = plr_anchor
         # To avoid going across the weird 5k-2d transition area,
         # do win streak for dans but loss streak for kyus
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, init_aga_rating >= 0 ? plr_b : plr_anchor))
-        WHR::mm_iterate()
+	puts "postgames = %d" % [i]
+	WHR::print_sorted_pdb()
+        WHR::nmsimplex()
         dKD = (plr_b.rating.kyudan - prev_rating.kyudan).abs
         puts "%3d %6.2f  %4.2f (%4.1f)" % [i, plr_b.rating.kyudan, dKD, 1/dKD]
         key_results[init_aga_rating][:dKD_init     ][days_rest] = dKD    if i==1
@@ -248,6 +255,7 @@ test "Ratings response" do
       puts
     end
   end
+  WHR::print_verbose_pdb()
   for init_aga_rating,v in key_results.each
     for k,v in v.each
       for days_rest,v in v.each
@@ -279,3 +287,4 @@ end
 
 #multi_test(["marathon_day",  0.01, 0.5, 0, 1.0])  # Increasing break time
 
+puts WHR::tostring_now()

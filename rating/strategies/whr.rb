@@ -162,11 +162,11 @@ class WHR_Player
   end
   def add_game(game)
     if @vpd == [] or @vpd[-1].day != game.day
-      if @name[0].class != Symbol or @anchor_R or @vpd == []  # Only use one vpd for special Symbol players
-        # Initial Guess same rating as previous vpd if it exists,
-        # Otherwise initial guess is opponent's rating
-        initial_r_guess = @vpd != [] ? @vpd[-1].r.dup : game.get_opponent(self).rating.dup
-        self.add_new_vpd(game.day, initial_r_guess)
+      if ((@name.class != Symbol) and (@anchor_R == nil) or @vpd == [])
+	# Initial Guess same rating as previous vpd if it exists,
+	# Otherwise initial guess is opponent's rating
+	initial_r_guess = @vpd != [] ? @vpd[-1].r.dup : game.get_opponent(self).rating.dup
+	self.add_new_vpd(game.day, initial_r_guess)
       end
     end
     if not @prior_initialized
@@ -288,6 +288,7 @@ module WHR
 
 PRIOR_WEIGHT  = 2.0
 MMITER_CHANGE_LIMIT = 0.1
+NMSIMPLEX_SIZE      = 0.1
 MAX_LINK_STRENGTH = 200.0     # draws/days
 MIN_LINK_STRENGTH = 4.0       # Prevent weird things happening in weird cases (player doesn't play for a long time)
 LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*7.0  # First 7 days don't actually reduce max link strength
@@ -474,8 +475,8 @@ def self.newton(player)
   end
 end
 
-def self.nmsimplex()
-  puts "begin nmsimplex " + tostring_now()
+def self.nmsimplex(verbose=0)
+  puts "begin nmsimplex " + tostring_now() if verbose>0
 
   # Create a linear mapping of vpd objects
   vpd_map = []
@@ -495,14 +496,25 @@ def self.nmsimplex()
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
       #print "v[%d]=%0.2f " % [i, v[i]]
     end
-    get_log_likelyhood()
+    #get_log_likelyhood()
+    get_direct_log_likelyhood()
   }
+  
+  #my_df = Proc.new { |x|
+  #  for i in (0..num_vpd-1)
+  #    vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
+  #    #print "v[%d]=%0.2f " % [i, v[i]]
+  #  end
+  #  get_direct_log_likelyhood_df()
+  #}
     
   my_func = GSL::MultiMin::Function.alloc(my_f, num_vpd)
   x = GSL::Vector.alloc(num_vpd)
-  x.set_all(1.0)
+  for i in (0..num_vpd-1)
+    x[i] = vpd_map[i].r.elo
+  end
   ss = GSL::Vector.alloc(num_vpd)
-  ss.set_all(100.0)
+  ss.set_all(2.0)
   minimizer = GSL::MultiMin::FMinimizer.alloc(GSL::MultiMin::FMinimizer::NMSIMPLEX2RAND, num_vpd)
 
   minimizer.set(my_func, x, ss)
@@ -511,24 +523,111 @@ def self.nmsimplex()
   begin
     iter += 1
     status = minimizer.iterate()
-    status = minimizer.test_size(0.1)
-    if status == GSL::SUCCESS
-      puts("converged to minimum at")
+    status = minimizer.test_size(NMSIMPLEX_SIZE)
+    if verbose>1
+      x = minimizer.x
+      printf("%5d ", iter)
+      for i in 0...num_vpd do
+        printf("%10.2f ", x[i])
+      end
     end
-    #x = minimizer.x
-    #printf("%5d ", iter)
-    #for i in 0...num_vpd do
-    #  printf("%10.2f ", x[i])
-    #end
-    printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size)
-  end while status == GSL::CONTINUE and iter < 500
+    printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>1
+  end while status == GSL::CONTINUE and iter < 5000
+  raise "Error" if iter == 5000
+  if status == GSL::SUCCESS
+    puts("converged to minimum at") if verbose>0
+  end
+  printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>0
 
   x = minimizer.x
   for i in (0..num_vpd-1)
     vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
     #print "v[%d]=%0.2f " % [i, v[i]]
   end
-  puts "end nmsimplex " + tostring_now()
+  puts "end nmsimplex " + tostring_now() if verbose > 0
+
+end
+
+
+def self.calc_ratings_fdf(verbose=0)
+  puts "begin calc_ratings_fdf " + tostring_now() if verbose>0
+
+  # Create a linear mapping of vpd objects
+  vpd_map = []
+  for name in ::PDB.keys()
+    player = ::PDB[name]
+    next if player.name[0].class == Symbol
+    next if player.anchor_R
+    for dayidx in (0..PDB[name].vpd.length-1)
+      vpd = PDB[name].vpd[dayidx]
+      vpd_map.push(vpd)
+    end
+  end
+  num_vpd = vpd_map.length
+
+  my_f = Proc.new { |x|
+    for i in (0..num_vpd-1)
+      vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
+      print "my_f x[%d]=%0.3f " % [i, x[i]]
+    end
+    #get_log_likelyhood()
+    ll = get_direct_log_likelyhood()
+    puts "ll=%0.3f" % [ll]
+    ll
+  }
+  
+  my_df = Proc.new { |x, params, df|
+    for i in (0..num_vpd-1)
+      vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
+      #print "v[%d]=%0.2f " % [i, v[i]]
+    end
+    get_direct_log_likelyhood_df(df)
+    for i in (0..num_vpd-1)
+      puts "my_df x[%d]=%0.3f params=%0.3f df=%0.3f" % [i, x[i], params[i], df[i]]
+    end
+  }
+    
+  my_func = GSL::MultiMin::Function_fdf.alloc(my_f, my_df, num_vpd)
+  my_func.set_params([1.0, 2.0])      # parameters
+
+  x = GSL::Vector.alloc(num_vpd)
+  for i in (0..num_vpd-1)
+    x[i] = vpd_map[i].r.elo
+  end
+  #ss = GSL::Vector.alloc(num_vpd)
+  #ss.set_all(2.0)
+  minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)
+
+  minimizer.set(my_func, x, 2.0, 2.3)   # 4th arg is "tol"
+
+  iter = 0
+  begin
+    iter += 1
+    status = minimizer.iterate()
+    status = minimizer.test_gradient(1e-3)
+    if verbose>1
+      x = minimizer.x
+      printf("%5d ", iter)
+      for i in 0...num_vpd do
+        printf("%10.2f ", x[i])
+      end
+    end
+    #printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>1
+    printf("\n")
+  end while status == GSL::CONTINUE and iter < 500
+  raise "iter=500" if iter == 500
+  raise "Bad status = %s" % [status] if status != GSL::SUCCESS
+  if status == GSL::SUCCESS
+    puts("converged to minimum at") if verbose>0
+  end
+  #printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>0
+
+  x = minimizer.x
+  for i in (0..num_vpd-1)
+    vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
+    #print "v[%d]=%0.2f " % [i, v[i]]
+  end
+  puts "end calc_ratings_fdf " + tostring_now() if verbose > 0
 
 end
 
@@ -539,79 +638,93 @@ def self.get_log_likelyhood()
   for name in ::PDB.keys()
     player = ::PDB[name]
     #puts "name=%s" % [name]
-    for dayidx in (0...PDB[name].vpd.length)
+    for dayidx in (0...player.vpd.length)
       vpd = player.vpd[dayidx]
       neighbor_vpd_list = []
       neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
       neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
       for neighbor_vpd in neighbor_vpd_list
-	num_draws = virtual_draw_weight(vpd.day, neighbor_vpd.day)
-	rd = vpd.r.elo - neighbor_vpd.r.elo
-	rd *= Rating::Q
-	p = GSL::Sf::log_erfc(rd/Math.sqrt(2)) - Math.log(2)
-	likelyhood += num_draws*0.5*p
-	p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)
-	likelyhood += num_draws*0.5*p
+        num_draws = virtual_draw_weight(vpd.day, neighbor_vpd.day)
+        rd = vpd.r.elo - neighbor_vpd.r.elo
+        rd *= Rating::Q
+        p = GSL::Sf::log_erfc(rd/Math.sqrt(2)) - Math.log(2)
+        likelyhood += num_draws*0.5*p
+        p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)
+        likelyhood += num_draws*0.5*p
       end
       prior_games = []
       prior_games = player.prior_games if dayidx == 0
       for game in vpd.games + prior_games
-        # Have to double count games because in this model the game weights are not symmetrical
-	#if game.white_player != player
-	#  puts "skip w=%s p=%s g=%s" % [game.white_player.name, player.name, game.tostring]
-	#end
-	next if game.white_player != player  # !! Forget that for now -- debugging
+        # Only count the game once
+        next if game.white_player != player
+        # But include the weight as viewed by both players 
+        # (In cases of new players the weight is not symmetrical)
         weight = game.get_weight(player)
+        weight += game.get_weight(game.get_opponent(player))
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
-        #opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-        opp_adjusted_r = opp_vpd.r.elo
-	rd = player.r.elo - opp_adjusted_r
+        opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
+        rd = player.r.elo - opp_adjusted_r.elo
         rd *= Rating::Q  # Convert to natural scale
-	if game.winner == player
-	  # Subtracting Math.log(2) isn't strictly necessary but it normalizes the smallest error to zero
-	  p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)  
-	else
-	  p = GSL::Sf::log_erfc(rd/Math.sqrt(2)) - Math.log(2)
-	end
+        if game.winner == player
+          # Subtracting Math.log(2) isn't strictly necessary but it normalizes the smallest error to zero
+          p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)  
+        else
+          p = GSL::Sf::log_erfc(rd/Math.sqrt(2)) - Math.log(2)
+        end
         likelyhood += weight * p
-        #puts "rd=%10.1f p=%10.2f g=%s" % [rd, p, game.tostring]
+        # p2 - compare erfc method to straight probability of this game outcome method
+        #p2 = 1/(1+Math.exp(rd))
+        #p2 = 1-p2 if game.winner == player
+        #puts "rd=%10.1f p=%10.2f p2=%10.2f g=%s" % [rd, Math.exp(p), p2, game.tostring]
       end
     end
   end
   return -likelyhood
 end
 
-def self.old_get_log_likelyhood()
+# Just take the log of the probability of the game outcome
+# Probably less proper than the log_erfc method
+# Main problem is it gets a math overflow before it can run Math.log() to avoid that
+# Other method uses the GSL log_erfc to do it all together and avoid the overflow
+def self.get_direct_log_likelyhood()
   likelyhood = 0
   for name in ::PDB.keys()
     player = ::PDB[name]
-    next if player.name[0].class == Symbol
-    for dayidx in (0..PDB[name].vpd.length-1)
-      vpd = PDB[name].vpd[dayidx]
+    for dayidx in (0...player.vpd.length)
+      vpd = player.vpd[dayidx]
+      neighbor_vpd_list = []
+      neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
+      neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
+      for neighbor_vpd in neighbor_vpd_list
+        num_draws = virtual_draw_weight(vpd.day, neighbor_vpd.day)
+        rd = vpd.r.elo - neighbor_vpd.r.elo
+        p = 1/(1+10**(rd/400.0))
+        likelyhood += num_draws*0.5*Math.log(p)
+        p = 1/(1+10**(-rd/400.0))
+        #p = 1-p   How much different would it be to do this instead?
+        likelyhood += num_draws*0.5*Math.log(p)
+      end
       prior_games = []
       prior_games = player.prior_games if dayidx == 0
       for game in vpd.games + prior_games
-        # Have to double count games because in this model the game weights are not symmetrical
+        # Only count the game once
+        next if game.white_player != player 
+        # But include the weight as viewed by both players 
+        # (In cases of new players the weight is not symmetrical)
         weight = game.get_weight(player)
+        weight += game.get_weight(game.get_opponent(player))
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-	rd = opp_adjusted_r.elo - player.r.elo
-	#if rd_reduce
-	#if rd > 1000
-	#  rd = 1000 + (rd-1000)/100.0
-	#end
-	#if rd < -1000
-	#  rd = -1000 + (rd+1000)/100.0
-	#end
-	#
-        #p = vpd.r.gamma / (vpd.r.gamma + opp_adjusted_r.gamma)
-	p = 1/(1+10**(rd/400.0))
-        p = 1-p if player != game.winner
-
+        rd = player.r.elo - opp_adjusted_r.elo
+	if game.winner != player
+	  p = 1/(1+10**( rd/400.0))
+	else
+	  p = 1/(1+10**(-rd/400.0))
+	end
         likelyhood += weight * Math.log(p)
-        puts "rd=%0.1f p=%f ln(p)=%f g=%s" % [rd, p, Math.log(p), game.tostring]
+        #puts "rd=%0.1f p=%f ln(p)=%f g=%s" % [rd, p, Math.log(p), game.tostring]
       end
     end
    end
@@ -619,25 +732,72 @@ def self.old_get_log_likelyhood()
 end
 
 
-def self.add_game(game, iterations=1)
-  game.white_player_vpd = game.white_player.add_game(game)
-  game.black_player_vpd = game.black_player.add_game(game)
-  mm_iterate(iterations, [game.white_player, game.black_player]) if iterations>0
+# First derivative
+def self.get_direct_log_likelyhood_df(df)
+  for name in ::PDB.keys()
+    player = ::PDB[name]
+    for dayidx in (0...player.vpd.length)
+      vpd = player.vpd[dayidx]
+      df[dayidx] = 0
+      neighbor_vpd_list = []
+      neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
+      neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
+      for neighbor_vpd in neighbor_vpd_list
+        num_draws = virtual_draw_weight(vpd.day, neighbor_vpd.day)
+        rd = vpd.r.elo - neighbor_vpd.r.elo
+	exp_nat_rd = Math.exp(rd*Rating::Q)
+        p = 1/(1+exp_nat_rd)
+        d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
+        df[dayidx] += num_draws*0.5*d_logp
+	rd = -rd
+	exp_nat_rd = Math.exp(rd*Rating::Q)
+        p = 1/(1+exp_nat_rd)
+        d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
+        df[dayidx] += num_draws*0.5*d_logp
+      end
+      prior_games = []
+      prior_games = player.prior_games if dayidx == 0
+      for game in vpd.games + prior_games
+        weight = game.get_weight(player)
+        hka = game.handi_komi_advantage(player)
+        opp_vpd = game.get_opponent_vpd(player)
+        opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
+        rd = player.r.elo - opp_adjusted_r.elo
+	if game.winner == player
+	  rd = -rd
+	end
+	exp_nat_rd = Math.exp(rd*Rating::Q)
+	p = 1/(1+10**(rd/400.0))
+        d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
+        df[dayidx] += weight*d_logp
+        #puts "rd=%0.1f log(p)=%f d_logp=%f g=%s" % [rd, Math.log(p), d_logp, game.tostring]
+      end
+    end
+   end
+   return 0
 end
 
 
-def self.print_PDB()
-  puts "print_PDB"
+def self.add_game(game, iterations=1)
+  game.white_player_vpd = game.white_player.add_game(game)
+  game.black_player_vpd = game.black_player.add_game(game)
+  #mm_iterate(iterations, [game.white_player, game.black_player]) if iterations>0
+end
+
+
+def self.print_pdb()
+  puts "print_pdb"
   for name in sorted(::PDB.keys())
     puts ::PDB[name].tostring(1)
   end
 end
 
-def self.print_verbose_PDB(verbose=9)
-  puts "print_verbose_PDB"
+def self.print_verbose_pdb(verbose=9)
+  puts "print_verbose_pdb"
   for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
     player = ::PDB[name]
-    next if name.class == Symbol # Skip anchors etc
+    #next if name.class == Symbol # Skip anchors etc
+    print ":" if name.class == Symbol
     puts name
     for vpd in player.vpd
       puts "   %6.0f %4d-%02d-%02d num_games=%d winrate=%0.3f" % [vpd.r.elo, vpd.day.year, vpd.day.month, vpd.day.day, vpd.num_games, vpd.winrate]
@@ -651,6 +811,9 @@ def self.print_verbose_PDB(verbose=9)
         if game.get_weight(player) != 1.0
           print " weight=%0.2f" % (game.get_weight(player))
         end
+	if verbose > 2
+	  print " ", game.tostring()
+	end
         puts
       end
     end
@@ -659,8 +822,8 @@ def self.print_verbose_PDB(verbose=9)
 end
 
 
-def self.print_sorted_PDB()
-  puts "print_sorted_PDB"
+def self.print_sorted_pdb()
+  puts "print_sorted_pdb"
   new_players = []
   i = 1
   # TODO implement <=> for rating class

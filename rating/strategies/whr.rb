@@ -10,6 +10,9 @@ require File.expand_path("../system/", File.dirname(__FILE__))
 #
 # TODO:
 # - Add ability to set an initial rank for a player
+#   Currently set to the rating of the first opponent
+#   Still pretty degenerate when first opponent is also unrated!
+#   (Will default to elo=0 aka 1k/1d boundary)
 #   (You can already sorta do this by maunally setting a different prior.)
 #
 
@@ -554,7 +557,7 @@ def self.calc_ratings_fdf(verbose=0)
 
   # Create a linear mapping of vpd objects
   vpd_map = []
-  for name in ::PDB.keys()
+  for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
     player = ::PDB[name]
     next if player.name[0].class == Symbol
     next if player.anchor_R
@@ -568,11 +571,11 @@ def self.calc_ratings_fdf(verbose=0)
   my_f = Proc.new { |x|
     for i in (0..num_vpd-1)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
-      print "my_f x[%d]=%0.3f " % [i, x[i]]
+      print "my_f x[%d]=%0.3f " % [i, x[i]] if verbose>1
     end
-    #get_log_likelyhood()
-    ll = get_direct_log_likelyhood()
-    puts "ll=%0.3f" % [ll]
+    ll = get_log_likelyhood()
+    #ll = get_direct_log_likelyhood()
+    puts "ll=%0.3f" % [ll] if verbose>1
     ll
   }
   
@@ -581,9 +584,12 @@ def self.calc_ratings_fdf(verbose=0)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
       #print "v[%d]=%0.2f " % [i, v[i]]
     end
-    get_direct_log_likelyhood_df(df)
-    for i in (0..num_vpd-1)
-      puts "my_df x[%d]=%0.3f params=%0.3f df=%0.3f" % [i, x[i], params[i], df[i]]
+    get_log_likelyhood_df(df)
+    #get_direct_log_likelyhood_df(df)
+    if verbose>1
+      for i in (0..num_vpd-1)
+        puts "my_df name=%3s x[%d]=%0.3f params=%0.3f df=%0.5f" % [vpd_map[i].player.name, i, x[i], params[i], df[i]]
+      end
     end
   }
     
@@ -594,27 +600,27 @@ def self.calc_ratings_fdf(verbose=0)
   for i in (0..num_vpd-1)
     x[i] = vpd_map[i].r.elo
   end
-  #ss = GSL::Vector.alloc(num_vpd)
-  #ss.set_all(2.0)
-  minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)
+  # For some reason BFGS2 does not work on my testcase
+  #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)
+  minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS, num_vpd)
 
-  minimizer.set(my_func, x, 2.0, 2.3)   # 4th arg is "tol"
+  minimizer.set(my_func, x, 10.0, 0.1)   # 3rd arg is stepsize, 4th arg is "tol"
 
   iter = 0
   begin
     iter += 1
     status = minimizer.iterate()
     status = minimizer.test_gradient(1e-3)
-    if verbose>1
-      x = minimizer.x
-      printf("%5d ", iter)
+    x = minimizer.x
+    if verbose>0
+      printf("iter=%5d ", iter)
       for i in 0...num_vpd do
         printf("%10.2f ", x[i])
       end
     end
-    #printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>1
-    printf("\n")
+    printf(" f() = %7.3f size = ????\n", minimizer.f) if verbose>0
   end while status == GSL::CONTINUE and iter < 500
+  #end while status == GSL::CONTINUE and iter < 10
   raise "iter=500" if iter == 500
   raise "Bad status = %s" % [status] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
@@ -683,6 +689,43 @@ def self.get_log_likelyhood()
   return -likelyhood
 end
 
+# First derivative
+def self.get_log_likelyhood_df(df)
+  dfidx = -1
+  for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
+    player = ::PDB[name]
+    next if player.name[0].class == Symbol
+    next if player.anchor_R
+    dfidx += 1
+    for dayidx in (0...player.vpd.length)
+      vpd = player.vpd[dayidx]
+      df[dfidx] = 0
+      #neighbor_vpd_list = []
+      #neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
+      #neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
+      #for neighbor_vpd in neighbor_vpd_list
+      # TODO add this
+      #end
+      prior_games = []
+      # TODO add prior
+      #prior_games = player.prior_games if dayidx == 0
+      for game in vpd.games + prior_games
+        weight = game.get_weight(player)
+        hka = game.handi_komi_advantage(player)
+        opp_vpd = game.get_opponent_vpd(player)
+        opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
+        rd = player.r.elo - opp_adjusted_r.elo
+        rd = -rd if game.winner == player
+        dp = Math.sqrt(2.0/Math::PI) * Math.exp(-rd*rd/2.0 - GSL::Sf::log_erfc(-rd/Math.sqrt(2.0)))
+        dp = -dp if game.winner != player
+        df[dfidx] += weight*dp
+        #puts "rd=%8.1f dp=%10.3f weight=%6.1f g=%s" % [rd, dp, weight, game.tostring]
+      end
+    end
+   end
+   return 0
+end
+
 # Just take the log of the probability of the game outcome
 # Probably less proper than the log_erfc method
 # Main problem is it gets a math overflow before it can run Math.log() to avoid that
@@ -734,11 +777,15 @@ end
 
 # First derivative
 def self.get_direct_log_likelyhood_df(df)
-  for name in ::PDB.keys()
+  dfidx = -1
+  for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
     player = ::PDB[name]
+    next if player.name[0].class == Symbol
+    next if player.anchor_R
+    dfidx += 1
     for dayidx in (0...player.vpd.length)
       vpd = player.vpd[dayidx]
-      df[dayidx] = 0
+      df[dfidx] = 0
       neighbor_vpd_list = []
       neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
       neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
@@ -748,12 +795,12 @@ def self.get_direct_log_likelyhood_df(df)
 	exp_nat_rd = Math.exp(rd*Rating::Q)
         p = 1/(1+exp_nat_rd)
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-        df[dayidx] += num_draws*0.5*d_logp
+        df[dfidx] += num_draws*0.5*d_logp
 	rd = -rd
 	exp_nat_rd = Math.exp(rd*Rating::Q)
         p = 1/(1+exp_nat_rd)
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-        df[dayidx] += num_draws*0.5*d_logp
+        df[dfidx] += num_draws*0.5*d_logp
       end
       prior_games = []
       prior_games = player.prior_games if dayidx == 0
@@ -769,7 +816,7 @@ def self.get_direct_log_likelyhood_df(df)
 	exp_nat_rd = Math.exp(rd*Rating::Q)
 	p = 1/(1+10**(rd/400.0))
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-        df[dayidx] += weight*d_logp
+        df[dfidx] += weight*d_logp
         #puts "rd=%0.1f log(p)=%f d_logp=%f g=%s" % [rd, Math.log(p), d_logp, game.tostring]
       end
     end

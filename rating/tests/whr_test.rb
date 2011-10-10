@@ -11,36 +11,45 @@ test "strength spike" do
   puts "strength spike"
   PDB.clear  # Reset PDB each test
   date = DateTime.parse("2011-09-29")
-  init_aga_rating = 2
-  final_aga_rating = 50
-  num_games = 110
-  PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new_aga_rating(init_aga_rating))
-  p_init  = PDB["i"] = WHR_Player.new("i", Rating.new_aga_rating(init_aga_rating))
-  p_final = PDB["f"] = WHR_Player.new("f", Rating.new_aga_rating(final_aga_rating))
-  black = PDB["b"] = WHR_Player.new("b")
+  init_elo_rating = 200
+  final_elo_rating = 5000
+  #num_games = 110
+  num_games = 8
+  PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new(init_elo_rating))
+  p_init  = PDB["i"] = WHR_Player.new("i", Rating.new(init_elo_rating))
+  p_final = PDB["f"] = WHR_Player.new("f", Rating.new(final_elo_rating))
+  black1 = PDB["b1"] = WHR_Player.new("b1")
+  black2 = PDB["b2"] = WHR_Player.new("b2")
   p_init.prior_initialized = true
   p_final.prior_initialized = true
-  black.prior_initialized = true
+  black1.prior_initialized = true
+  black2.prior_initialized = true
   day = 0
   (num_games/2-2).times do
-    WHR::add_game(Game.new_even(date+day, p_init, black, p_init))
-    WHR::add_game(Game.new_even(date+day, p_init, black, black))
+    WHR::add_game(Game.new_even(date+day, p_init, black1, p_init))
+    WHR::add_game(Game.new_even(date+day, p_init, black1, black1))
+    #WHR::add_game(Game.new_even(date+day, black1, p_init, p_init))
+    #WHR::add_game(Game.new_even(date+day, black1, p_init, black1))
+    #WHR::add_game(Game.new_even(date+day, black1, p_init, p_init))
+    #WHR::add_game(Game.new_even(date+day, p_init, black1, black1))
   end
   day = 10
   (num_games/2+2).times do
-    WHR::add_game(Game.new_even(date+day, p_final, black, p_final))
-    WHR::add_game(Game.new_even(date+day, p_final, black, black))
+    WHR::add_game(Game.new_even(date+day, p_final, black2, p_final))
+    WHR::add_game(Game.new_even(date+day, p_final, black2, black2))
+    #WHR::add_game(Game.new_even(date+day, black2, p_final, p_final))
+    #WHR::add_game(Game.new_even(date+day, black2, p_final, black2))
+    #WHR::add_game(Game.new_even(date+day, p_final, black2, p_final))
+    #WHR::add_game(Game.new_even(date+day, black2, p_final, black2))
   end
+  black1.vpd[0].r.elo = 210
+  black2.vpd[0].r.elo = 220
   puts WHR::tostring_now()
   puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
-  WHR::print_verbose_pdb(1)
-  WHR::nmsimplex()
-  #WHR::calc_ratings_fdf(9)
+  WHR::print_verbose_pdb(9)
+  #WHR::nmsimplex()
+  WHR::calc_ratings_fdf(1)
   puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
-  puts black.tostring()
-  puts p_init.tostring()
-  puts p_final.tostring()
-  WHR::print_sorted_pdb()
   WHR::print_verbose_pdb(1)
   #puts "start mm_iterate=%s" % [WHR::tostring_now()]
   #WHR::mm_iterate()

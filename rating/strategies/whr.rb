@@ -619,8 +619,8 @@ def self.calc_ratings_fdf(verbose=0)
       end
     end
     printf(" f() = %7.3f size = ????\n", minimizer.f) if verbose>0
-  end while status == GSL::CONTINUE and iter < 500
-  #end while status == GSL::CONTINUE and iter < 10
+  #end while status == GSL::CONTINUE and iter < 500
+  end while status == GSL::CONTINUE and iter < 50
   raise "iter=500" if iter == 500
   raise "Bad status = %s" % [status] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
@@ -715,9 +715,9 @@ def self.get_log_likelyhood_df(df)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
         rd = player.r.elo - opp_adjusted_r.elo
-        rd = -rd if game.winner == player
+        rd = -rd if game.winner != player
         dp = Math.sqrt(2.0/Math::PI) * Math.exp(-rd*rd/2.0 - GSL::Sf::log_erfc(-rd/Math.sqrt(2.0)))
-        dp = -dp if game.winner != player
+        dp = -dp if game.winner == player
         df[dfidx] += weight*dp
         #puts "rd=%8.1f dp=%10.3f weight=%6.1f g=%s" % [rd, dp, weight, game.tostring]
       end

@@ -114,6 +114,9 @@ class PlayerDay
     return -1.0 if @games.length == 0
     return @wins / @games.length
   end
+  def day_to_s
+    return "%4d-%2d-%2d" % [@day.year, @day.month, @day.day]
+  end
 end
 
 
@@ -166,10 +169,10 @@ class WHR_Player
   def add_game(game)
     if @vpd == [] or @vpd[-1].day != game.day
       if ((@name.class != Symbol) and (@anchor_R == nil) or @vpd == [])
-	# Initial Guess same rating as previous vpd if it exists,
-	# Otherwise initial guess is opponent's rating
-	initial_r_guess = @vpd != [] ? @vpd[-1].r.dup : game.get_opponent(self).rating.dup
-	self.add_new_vpd(game.day, initial_r_guess)
+        # Initial Guess same rating as previous vpd if it exists,
+        # Otherwise initial guess is opponent's rating
+        initial_r_guess = @vpd != [] ? @vpd[-1].r.dup : game.get_opponent(self).rating.dup
+        self.add_new_vpd(game.day, initial_r_guess)
       end
     end
     if not @prior_initialized
@@ -299,8 +302,9 @@ MMITER_TURN_LIMIT = 3000      # Quit if we do many loops without hitting MMITER_
 HESSIAN_EPSILON = 0.0         # TODO make sure zero is ok, original was 0.1
 START_TIME = DateTime.now()   # For performance tracking only
 DEBUG = false
+USE_DIRECT_LOG_LIKELYHOOD = true
 
-def self.tostring_now()  return "%fs" % [(DateTime.now() - START_TIME)*24*60*60] end
+def self.tostring_now()  return "%0.1fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
 def self.virtual_draw_weight(day1, day2)
   weight = LINK_STRENGTH_SCALE / (day1 - day2).abs
@@ -499,8 +503,11 @@ def self.nmsimplex(verbose=0)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
       #print "v[%d]=%0.2f " % [i, v[i]]
     end
-    #get_log_likelyhood()
-    get_direct_log_likelyhood()
+    if USE_DIRECT_LOG_LIKELYHOOD
+      get_direct_log_likelyhood()
+    else
+      get_log_likelyhood()
+    end
   }
   
   #my_df = Proc.new { |x|
@@ -573,22 +580,27 @@ def self.calc_ratings_fdf(verbose=0)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
       print "my_f x[%d]=%0.3f " % [i, x[i]] if verbose>1
     end
-    ll = get_log_likelyhood()
-    #ll = get_direct_log_likelyhood()
-    puts "ll=%0.3f" % [ll] if verbose>1
+    if USE_DIRECT_LOG_LIKELYHOOD
+      ll = get_direct_log_likelyhood()
+    else
+      ll = get_log_likelyhood()
+    end
+    puts "ll=%10.6f" % [ll] if verbose>1
     ll
   }
   
   my_df = Proc.new { |x, params, df|
     for i in (0..num_vpd-1)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
-      #print "v[%d]=%0.2f " % [i, v[i]]
     end
-    get_log_likelyhood_df(df)
-    #get_direct_log_likelyhood_df(df)
+    if USE_DIRECT_LOG_LIKELYHOOD
+      get_direct_log_likelyhood_df(df)
+    else
+      get_log_likelyhood_df(df)
+    end
     if verbose>1
       for i in (0..num_vpd-1)
-        puts "my_df name=%3s x[%d]=%0.3f params=%0.3f df=%0.5f" % [vpd_map[i].player.name, i, x[i], params[i], df[i]]
+        puts "my_df name=%3s x[%d]=%0.3f df=%0.5f" % [vpd_map[i].player.name, i, x[i], df[i]]
       end
     end
   }
@@ -696,30 +708,30 @@ def self.get_log_likelyhood_df(df)
     player = ::PDB[name]
     next if player.name[0].class == Symbol
     next if player.anchor_R
-    dfidx += 1
     for dayidx in (0...player.vpd.length)
+      dfidx += 1
       vpd = player.vpd[dayidx]
       df[dfidx] = 0
-      #neighbor_vpd_list = []
-      #neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
-      #neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
-      #for neighbor_vpd in neighbor_vpd_list
-      # TODO add this
-      #end
+      neighbor_vpd_list = []
+      neighbor_vpd_list.push(player.vpd[dayidx-1]) if dayidx > 0
+      neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
+      for neighbor_vpd in neighbor_vpd_list
+        raise "TODO add this"
+      end
       prior_games = []
-      # TODO add prior
-      #prior_games = player.prior_games if dayidx == 0
+      prior_games = player.prior_games if dayidx == 0
       for game in vpd.games + prior_games
         weight = game.get_weight(player)
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
         rd = player.r.elo - opp_adjusted_r.elo
+        rd *= Rating::Q
         rd = -rd if game.winner != player
         dp = Math.sqrt(2.0/Math::PI) * Math.exp(-rd*rd/2.0 - GSL::Sf::log_erfc(-rd/Math.sqrt(2.0)))
         dp = -dp if game.winner == player
         df[dfidx] += weight*dp
-        #puts "rd=%8.1f dp=%10.3f weight=%6.1f g=%s" % [rd, dp, weight, game.tostring]
+        puts "rd=%8.5f dp=%10.3f weight=%6.1f g=%s" % [rd, dp, weight, game.tostring]
       end
     end
    end
@@ -761,11 +773,11 @@ def self.get_direct_log_likelyhood()
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
         rd = player.r.elo - opp_adjusted_r.elo
-	if game.winner != player
-	  p = 1/(1+10**( rd/400.0))
-	else
-	  p = 1/(1+10**(-rd/400.0))
-	end
+        if game.winner != player
+          p = 1/(1+10**( rd/400.0))
+        else
+          p = 1/(1+10**(-rd/400.0))
+        end
         likelyhood += weight * Math.log(p)
         #puts "rd=%0.1f p=%f ln(p)=%f g=%s" % [rd, p, Math.log(p), game.tostring]
       end
@@ -782,8 +794,8 @@ def self.get_direct_log_likelyhood_df(df)
     player = ::PDB[name]
     next if player.name[0].class == Symbol
     next if player.anchor_R
-    dfidx += 1
     for dayidx in (0...player.vpd.length)
+      dfidx += 1
       vpd = player.vpd[dayidx]
       df[dfidx] = 0
       neighbor_vpd_list = []
@@ -791,16 +803,15 @@ def self.get_direct_log_likelyhood_df(df)
       neighbor_vpd_list.push(player.vpd[dayidx+1]) if dayidx < player.vpd.length-1
       for neighbor_vpd in neighbor_vpd_list
         num_draws = virtual_draw_weight(vpd.day, neighbor_vpd.day)
-        rd = vpd.r.elo - neighbor_vpd.r.elo
-	exp_nat_rd = Math.exp(rd*Rating::Q)
-        p = 1/(1+exp_nat_rd)
-        d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-        df[dfidx] += num_draws*0.5*d_logp
-	rd = -rd
-	exp_nat_rd = Math.exp(rd*Rating::Q)
-        p = 1/(1+exp_nat_rd)
-        d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-        df[dfidx] += num_draws*0.5*d_logp
+        for iwon in [true, false]   # Well this is a silly but simple way to match this with the regular code below
+          rd = vpd.r.elo - neighbor_vpd.r.elo
+          rd = -rd if (iwon)
+          exp_nat_rd = Math.exp(rd*Rating::Q)
+          p = 1/(1+exp_nat_rd)
+          d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
+          d_logp = -d_logp if (iwon)
+          df[dfidx] += num_draws*0.5*d_logp
+        end
       end
       prior_games = []
       prior_games = player.prior_games if dayidx == 0
@@ -810,14 +821,14 @@ def self.get_direct_log_likelyhood_df(df)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
         rd = player.r.elo - opp_adjusted_r.elo
-	if game.winner == player
-	  rd = -rd
-	end
-	exp_nat_rd = Math.exp(rd*Rating::Q)
-	p = 1/(1+10**(rd/400.0))
+        rd = -rd if game.winner == player
+        exp_nat_rd = Math.exp(rd*Rating::Q)
+        #p = 1/(1+10**(rd/400.0))
+        p = 1/(1+exp_nat_rd)
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
+        d_logp = -d_logp if game.winner != player
         df[dfidx] += weight*d_logp
-        #puts "rd=%0.1f log(p)=%f d_logp=%f g=%s" % [rd, Math.log(p), d_logp, game.tostring]
+        #puts "rd=%8.1f log(p)=%10.3f d_logp=%10.3f g=%s" % [rd, Math.log(p), d_logp, game.tostring]
       end
     end
    end
@@ -858,9 +869,9 @@ def self.print_verbose_pdb(verbose=9)
         if game.get_weight(player) != 1.0
           print " weight=%0.2f" % (game.get_weight(player))
         end
-	if verbose > 2
-	  print " ", game.tostring()
-	end
+        if verbose > 2
+          print " ", game.tostring()
+        end
         puts
       end
     end

@@ -78,11 +78,14 @@ test "win_ratio" do
       end
       WHR::add_game(Game.new_even(date, white, black, stronger==:black ? white : black),0)
       puts black.tostring()
-      #date += 1  TODO add back date increment for fdf method
+      date += 1
     end
+    printf "win_ratio=%d stronger=%s\n" % [win_ratio, stronger]
+    printf "nmsimplex\n"
     #WHR::nmsimplex
+    #WHR::print_sorted_pdb()
     printf "calc_ratings_fdf for win_ratio=%d stronger=%s\n" % [win_ratio, stronger]
-    WHR::calc_ratings_fdf(2)
+    WHR::calc_ratings_fdf(9)
     puts black.tostring(1)
     WHR::print_sorted_pdb()
     WHR::print_verbose_pdb(1)

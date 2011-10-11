@@ -594,13 +594,13 @@ def self.calc_ratings_fdf(verbose=0)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
     end
     if USE_DIRECT_LOG_LIKELYHOOD
-      get_direct_log_likelyhood_df(df)
+      get_direct_log_likelyhood_df(df, verbose)
     else
       get_log_likelyhood_df(df)
     end
     if verbose>1
       for i in (0..num_vpd-1)
-        puts "my_df name=%3s x[%d]=%0.3f df=%0.5f" % [vpd_map[i].player.name, i, x[i], df[i]]
+        puts "my_df name=%3s i=%d x=%0.7f df=%0.7f" % [vpd_map[i].player.name, i, x[i], df[i]]
       end
     end
   }
@@ -682,7 +682,8 @@ def self.get_log_likelyhood()
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-        rd = player.r.elo - opp_adjusted_r.elo
+        #rd = player.r.elo - opp_adjusted_r.elo  TODO how did this compile?  There is no "r" attr/method in player objects!!!
+        rd = vpd.r.elo - opp_adjusted_r.elo
         rd *= Rating::Q  # Convert to natural scale
         if game.winner == player
           # Subtracting Math.log(2) isn't strictly necessary but it normalizes the smallest error to zero
@@ -725,7 +726,7 @@ def self.get_log_likelyhood_df(df)
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-        rd = player.r.elo - opp_adjusted_r.elo
+        rd = vpd.r.elo - opp_adjusted_r.elo
         rd *= Rating::Q
         rd = -rd if game.winner != player
         dp = Math.sqrt(2.0/Math::PI) * Math.exp(-rd*rd/2.0 - GSL::Sf::log_erfc(-rd/Math.sqrt(2.0)))
@@ -788,7 +789,7 @@ end
 
 
 # First derivative
-def self.get_direct_log_likelyhood_df(df)
+def self.get_direct_log_likelyhood_df(df, verbose=0)
   dfidx = -1
   for name in ::PDB.keys().sort { |a,b| a.to_s <=> b.to_s }
     player = ::PDB[name]
@@ -809,8 +810,9 @@ def self.get_direct_log_likelyhood_df(df)
           exp_nat_rd = Math.exp(rd*Rating::Q)
           p = 1/(1+exp_nat_rd)
           d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
-          d_logp = -d_logp if (iwon)
+          d_logp = -d_logp if (!iwon)
           df[dfidx] += num_draws*0.5*d_logp
+          printf "rd=%8.1f log(p)=%10.3f d_logp=%10.3f myr=%8.1f nr=%8.1f\n" % [rd, Math.log(p), d_logp, vpd.r.elo, neighbor_vpd.r.elo] if verbose > 2
         end
       end
       prior_games = []
@@ -820,7 +822,8 @@ def self.get_direct_log_likelyhood_df(df)
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-        rd = player.r.elo - opp_adjusted_r.elo
+        rd = vpd.r.elo - opp_adjusted_r.elo
+        puts "rd=%8.1f myelo=%8.3f hiselo=%8.3f myname=%s hisname=%s" % [rd, vpd.r.elo, opp_vpd.r.elo, player.name, opp_vpd.player.name] if verbose > 2
         rd = -rd if game.winner == player
         exp_nat_rd = Math.exp(rd*Rating::Q)
         #p = 1/(1+10**(rd/400.0))
@@ -828,8 +831,9 @@ def self.get_direct_log_likelyhood_df(df)
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
         d_logp = -d_logp if game.winner != player
         df[dfidx] += weight*d_logp
-        #puts "rd=%8.1f log(p)=%10.3f d_logp=%10.3f g=%s" % [rd, Math.log(p), d_logp, game.tostring]
+        puts "rd=%8.1f log(p)=%10.3f d_logp=%10.3f hka=%5f g=%s" % [rd, Math.log(p), d_logp, hka.elo, game.tostring] if verbose > 2
       end
+      printf "dayidx=%3d df=%10.5f name=%3s\n" % [dayidx, df[dfidx], vpd.player.name] if verbose > 2
     end
    end
    return 0

@@ -257,7 +257,7 @@ test "Ratings response" do
         # To avoid going across the weird 5k-2d transition area,
         # do win streak for dans but loss streak for kyus
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, init_aga_rating >= 0 ? plr_b : plr_anchor))
-	puts "postgames = %d" % [i]
+        printf "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest} postgames = %d\n" % [i]
 	WHR::print_sorted_pdb()
         #WHR::nmsimplex()
         WHR::calc_ratings_fdf(1)

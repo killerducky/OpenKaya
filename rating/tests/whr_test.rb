@@ -4,7 +4,20 @@ require File.expand_path("../system", File.dirname(__FILE__))
 
 PDB = {}
 EVEN_GAME = ["aga", 0, 7.5]
+START_TIME = DateTime.now()   # For performance tracking only
+MINIMIZE_METHOD = :fdf
 
+def self.tostring_now()  return "total %0.1fs" % [(DateTime.now() - START_TIME)*24*60*60] end
+
+def self.minimize
+  printf "minimize\n"
+  case MINIMIZE_METHOD
+    when :nmsimplex then WHR::nmsimplex()
+    when :fdf       then WHR::calc_ratings_fdf()
+  end
+end
+
+printf "%s\n" % [tostring_now]
 WHR::print_constants()
 
 test "strength spike" do
@@ -48,7 +61,8 @@ test "strength spike" do
   puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
   WHR::print_verbose_pdb(9)
   #WHR::nmsimplex()
-  WHR::calc_ratings_fdf(2)
+  #WHR::calc_ratings_fdf()
+  minimize()
   puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
   WHR::print_verbose_pdb(1)
   #puts "start mm_iterate=%s" % [WHR::tostring_now()]
@@ -85,7 +99,7 @@ test "win_ratio" do
     #WHR::nmsimplex
     #WHR::print_sorted_pdb()
     printf "calc_ratings_fdf for win_ratio=%d stronger=%s\n" % [win_ratio, stronger]
-    WHR::calc_ratings_fdf(9)
+    WHR::calc_ratings_fdf(0)
     puts black.tostring(1)
     WHR::print_sorted_pdb()
     WHR::print_verbose_pdb(1)
@@ -171,7 +185,7 @@ def multi_test(test)
     end
   end
   #WHR::nmsimplex()
-  WHR::calc_ratings_fdf(1)
+  WHR::calc_ratings_fdf(0)
   WHR::print_verbose_pdb(1)
   WHR::print_sorted_pdb()
 end
@@ -192,7 +206,7 @@ test "Equal wins" do
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_b),0)
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w),0)
         #WHR::nmsimplex()
-        WHR::calc_ratings_fdf(1)
+        WHR::calc_ratings_fdf(0)
         diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
         puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
         assert (diff.abs < 0.05)             # Ratings should almost match the handicap advantage
@@ -246,21 +260,21 @@ test "Ratings response" do
       end
       #WHR::nmsimplex()
       puts "calc_ratings_fdf on even games"
-      WHR::calc_ratings_fdf(1)
+      WHR::calc_ratings_fdf(0)
       WHR::print_sorted_pdb()
       WHR::print_verbose_pdb()
       for i in 1..POST_GAMES
         prev_rating = plr_b.rating.dup
-	anchor_name = "anchor%d"%[i]
+        anchor_name = "anchor%d"%[i]
         plr_anchor = WHR_Player.new(anchor_name, prev_rating.dup)  # Keep making new anchors to play against
-	PDB[anchor_name] = plr_anchor
+        PDB[anchor_name] = plr_anchor
         # To avoid going across the weird 5k-2d transition area,
         # do win streak for dans but loss streak for kyus
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, init_aga_rating >= 0 ? plr_b : plr_anchor))
         printf "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest} postgames = %d\n" % [i]
-	WHR::print_sorted_pdb()
+        WHR::print_sorted_pdb()
         #WHR::nmsimplex()
-        WHR::calc_ratings_fdf(1)
+        WHR::calc_ratings_fdf(0)
         dKD = (plr_b.rating.kyudan - prev_rating.kyudan).abs
         puts "%3d %6.2f  %4.2f (%4.1f)" % [i, plr_b.rating.kyudan, dKD, 1/dKD]
         key_results[init_aga_rating][:dKD_init     ][days_rest] = dKD    if i==1
@@ -305,4 +319,4 @@ end
 
 #multi_test(["marathon_day",  0.01, 0.5, 0, 1.0])  # Increasing break time
 
-puts WHR::tostring_now()
+printf "%s\n" % [tostring_now]

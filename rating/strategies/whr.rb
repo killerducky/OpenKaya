@@ -616,7 +616,7 @@ def self.calc_ratings_fdf(verbose=0)
   #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)
   minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS, num_vpd)
 
-  minimizer.set(my_func, x, 10.0, 0.1)   # 3rd arg is stepsize, 4th arg is "tol"
+  minimizer.set(my_func, x, 10.0, 0.0001)   # 3rd arg is stepsize, 4th arg is "tol"
 
   iter = 0
   begin
@@ -632,13 +632,12 @@ def self.calc_ratings_fdf(verbose=0)
     end
     printf(" f() = %7.3f size = ????\n", minimizer.f) if verbose>0
   #end while status == GSL::CONTINUE and iter < 500
-  end while status == GSL::CONTINUE and iter < 50
-  raise "iter=500" if iter == 500
-  raise "Bad status = %s" % [status] if status != GSL::SUCCESS
+  end while status == GSL::CONTINUE and iter < 100
+  raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
-    puts("converged to minimum at") if verbose>0
+    printf("converged to minimum at") if verbose>0
   end
-  #printf(" f() = %7.3f size = %.3f\n", minimizer.fval, minimizer.size) if verbose>0
+  printf(" iter=%3d f() = %7.3f size = ????\n", iter, minimizer.f) if verbose>0
 
   x = minimizer.x
   for i in (0..num_vpd-1)
@@ -675,7 +674,7 @@ def self.get_log_likelyhood()
       for game in vpd.games + prior_games
         # Only count the game once
         next if game.white_player != player
-        # But include the weight as viewed by both players 
+        # But include the weight as viewed by both players
         # (In cases of new players the weight is not symmetrical)
         weight = game.get_weight(player)
         weight += game.get_weight(game.get_opponent(player))
@@ -687,7 +686,7 @@ def self.get_log_likelyhood()
         rd *= Rating::Q  # Convert to natural scale
         if game.winner == player
           # Subtracting Math.log(2) isn't strictly necessary but it normalizes the smallest error to zero
-          p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)  
+          p = GSL::Sf::log_erfc(-rd/Math.sqrt(2)) - Math.log(2)
         else
           p = GSL::Sf::log_erfc(rd/Math.sqrt(2)) - Math.log(2)
         end
@@ -765,8 +764,8 @@ def self.get_direct_log_likelyhood()
       prior_games = player.prior_games if dayidx == 0
       for game in vpd.games + prior_games
         # Only count the game once
-        next if game.white_player != player 
-        # But include the weight as viewed by both players 
+        next if game.white_player != player
+        # But include the weight as viewed by both players
         # (In cases of new players the weight is not symmetrical)
         weight = game.get_weight(player)
         weight += game.get_weight(game.get_opponent(player))

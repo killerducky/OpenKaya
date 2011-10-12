@@ -67,6 +67,16 @@ class Rating
     r = kyudan()
     return r < 0.0 ? r - 1.0 : r + 1.0  # Add the (-1.0,1.0) gap
   end
+  def rank()
+    r = aga_rating()
+    return r < 0.0 ? "%dk" % -r.ceil : "%dd" % r.floor
+  end
+  def aga_rank_str()
+    r = aga_rating()
+    return r < 0.0 ? 
+      "%0.1fk" % [(r*10.0).ceil/10.0] : 
+      "%0.1fd" % [(r*10.0).floor/10.0]
+  end
   def kyudan=(kyudan)
     if kyudan < KD_FIVE_KYU
       @elo = (kyudan - KD_FIVE_KYU)*KGS_KYU_TRANSFORM + FIVE_KYU
@@ -136,6 +146,7 @@ class WHR_Player
     end
     @prior_games = []  # Virtual games on the first player day to avoid all wins / all losses spiraling
   end
+  def id() return @name end  # For Kaya system
   def get_vpd(day)
     for vpd in @vpd
       return vpd if vpd.day == day
@@ -177,6 +188,7 @@ class WHR_Player
     end
     if not @prior_initialized
       self.add_prior(game.day)
+      print "added prior to %s\n" % [@name]
       @prior_initialized = true
     end
     @vpd[-1].games.push(game)
@@ -292,6 +304,10 @@ end
 
 module WHR
 
+MINIMIZE_METHOD = :fdf
+TOL = 0.0001
+STEPSIZE = 10
+EPSABS = 1e-3
 PRIOR_WEIGHT  = 2.0
 MMITER_CHANGE_LIMIT = 0.1
 NMSIMPLEX_SIZE      = 0.1
@@ -304,6 +320,7 @@ HESSIAN_EPSILON = 0.0         # TODO make sure zero is ok, original was 0.1
 START_TIME = DateTime.now()   # For performance tracking only
 DEBUG = false
 USE_DIRECT_LOG_LIKELYHOOD = true
+INITIAL_RATING = nil   # non-nil ratings are used for anchors, TODO should allow for the initial rating to be either anchors or priors
 
 def self.tostring_now()  return "%0.1fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
@@ -483,6 +500,14 @@ def self.newton(player)
   end
 end
 
+def self.minimize(method=MINIMIZE_METHOD)
+  printf "minimize\n"
+  case method
+    when :nmsimplex then WHR::nmsimplex()
+    when :fdf       then WHR::calc_ratings_fdf(1)
+  end
+end
+
 def self.nmsimplex(verbose=0)
   puts "begin nmsimplex " + tostring_now() if verbose>0
 
@@ -571,10 +596,10 @@ def self.calc_ratings_fdf(verbose=0)
   my_f = Proc.new { |x|
     for i in (0..num_vpd-1)
       vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
-      print "my_f x[%d]=%0.3f " % [i, x[i]] if verbose>1
+      #print "my_f x[%d]=%0.3f " % [i, x[i]] if verbose>1
     end
     if USE_DIRECT_LOG_LIKELYHOOD
-      ll = get_direct_log_likelyhood()
+      ll = get_direct_log_likelyhood(verbose)
     else
       ll = get_log_likelyhood()
     end
@@ -603,6 +628,7 @@ def self.calc_ratings_fdf(verbose=0)
 
   x = GSL::Vector.alloc(num_vpd)
   for i in (0..num_vpd-1)
+    #vpd_map[i].r.elo += Random.rand()
     x[i] = vpd_map[i].r.elo
   end
   # For some reason BFGS2 does not work on my testcase
@@ -611,27 +637,34 @@ def self.calc_ratings_fdf(verbose=0)
   #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::CONJUGATE_FR, num_vpd)  # sorta works
   minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::CONJUGATE_PR, num_vpd)   # works best
 
-  minimizer.set(my_func, x, 10.0, 0.0001)   # 3rd arg is stepsize, 4th arg is "tol"
+  minimizer.set(my_func, x, STEPSIZE, TOL)
 
   iter = 0
   begin
     iter += 1
     status = minimizer.iterate()
-    status = minimizer.test_gradient(1e-3)
+    status = minimizer.test_gradient(EPSABS)
+    prev_x = x
     x = minimizer.x
+    dx = x-prev_x
     if verbose>0
-      printf("iter=%5d ", iter)
-      for i in 0...num_vpd do
-        printf("%10.2f ", x[i])
+      printf("iter=%5d", iter)
+      if verbose>1
+        for i in 0...num_vpd do
+          print(" x=%10.5f (dx=%10.5f)" % [x[i], dx[i]])
+        end
       end
+      printf(" norm_dx=%0.7f max_dx=%0.7f", dx.norm, dx.max) if verbose>0
     end
-    printf(" f() = %7.3f size = ????\n", minimizer.f) if verbose>0
-  end while status == GSL::CONTINUE and iter < 500
-  raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
+    printf(" f=%7.3f min=%7.3f norm=%0.7f\n", minimizer.f, minimizer.minimum, minimizer.gradient.norm) if verbose>0
+    $stdout.flush if verbose>0
+  #end while status == GSL::CONTINUE and iter < 500
+  end while status == GSL::CONTINUE and iter < 5 # !!!
+  #raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
     printf("converged to minimum at") if verbose>0
   end
-  printf(" iter=%3d f() = %7.3f size = ????\n", iter, minimizer.f) if verbose>0
+  printf(" iter=%3d f=%7.3f norm=%0.7f\n", iter, minimizer.f, minimizer.minimum, minimizer.gradient.norm) if verbose>0
 
   x = minimizer.x
   for i in (0..num_vpd-1)
@@ -736,7 +769,7 @@ end
 # Probably less proper than the log_erfc method
 # Main problem is it gets a math overflow before it can run Math.log() to avoid that
 # Other method uses the GSL log_erfc to do it all together and avoid the overflow
-def self.get_direct_log_likelyhood()
+def self.get_direct_log_likelyhood(verbose=0)
   likelyhood = 0
   for name in ::PDB.keys()
     player = ::PDB[name]
@@ -773,7 +806,7 @@ def self.get_direct_log_likelyhood()
           p = 1/(1+10**(-rd/400.0))
         end
         likelyhood += weight * Math.log(p)
-        #puts "rd=%0.1f p=%f ln(p)=%f g=%s" % [rd, p, Math.log(p), game.tostring]
+        puts "rd=%0.1f p=%f ln(p)=%f weight=%f g=%s" % [rd, p, Math.log(p), weight, game.tostring] if verbose>2
       end
     end
    end
@@ -805,18 +838,21 @@ def self.get_direct_log_likelyhood_df(df, verbose=0)
           d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
           d_logp = -d_logp if (!iwon)
           df[dfidx] += num_draws*0.5*d_logp
-          printf "rd=%8.1f log(p)=%10.3f d_logp=%10.3f myr=%8.1f nr=%8.1f\n" % [rd, Math.log(p), d_logp, vpd.r.elo, neighbor_vpd.r.elo] if verbose > 2
+          printf "rd=%8.1f log(p)=%10.3f d_logp=%10.3f myr=%8.1f nr=%8.1f weight=%f\n" % [rd, Math.log(p), d_logp, vpd.r.elo, neighbor_vpd.r.elo, num_draws*0.5] if verbose > 2
         end
       end
       prior_games = []
       prior_games = player.prior_games if dayidx == 0
       for game in vpd.games + prior_games
+        # Include the weight as viewed by both players
+        # (In cases of new players the weight is not symmetrical)
         weight = game.get_weight(player)
+        weight += game.get_weight(game.get_opponent(player))
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
         rd = vpd.r.elo - opp_adjusted_r.elo
-        puts "rd=%8.1f myelo=%8.3f hiselo=%8.3f myname=%s hisname=%s" % [rd, vpd.r.elo, opp_vpd.r.elo, player.name, opp_vpd.player.name] if verbose > 2
+        #puts "rd=%8.1f myelo=%8.3f hiselo=%8.3f myname=%s hisname=%s" % [rd, vpd.r.elo, opp_vpd.r.elo, player.name, opp_vpd.player.name] if verbose > 2
         rd = -rd if game.winner == player
         exp_nat_rd = Math.exp(rd*Rating::Q)
         #p = 1/(1+10**(rd/400.0))
@@ -824,7 +860,7 @@ def self.get_direct_log_likelyhood_df(df, verbose=0)
         d_logp = -exp_nat_rd/((exp_nat_rd+1)**2)/p
         d_logp = -d_logp if game.winner != player
         df[dfidx] += weight*d_logp
-        puts "rd=%8.1f log(p)=%10.3f d_logp=%10.3f hka=%5f g=%s" % [rd, Math.log(p), d_logp, hka.elo, game.tostring] if verbose > 2
+        puts "rd=%8.1f log(p)=%10.3f d_logp=%10.3f hka=%5f weight=%f g=%s" % [rd, Math.log(p), d_logp, hka.elo, weight, game.tostring] if verbose > 2
       end
       printf "dayidx=%3d df=%10.5f name=%3s\n" % [dayidx, df[dfidx], vpd.player.name] if verbose > 2
     end
@@ -839,6 +875,29 @@ def self.add_game(game, iterations=1)
   #mm_iterate(iterations, [game.white_player, game.black_player]) if iterations>0
 end
 
+# Kaya system format
+def self.add_result(input, players)
+    raise WhrError, "Invalid arguments #{input}" unless input[:white_player] && input[:black_player] && input[:winner] && input[:datetime] && input[:rules] && input[:handicap] && input[:komi]
+    raise WhrError, "Invalid winner #{input}" unless (input[:winner] == "W" or input[:winner] == "B")
+    # TODO lots of cheating here with PDB global hack, bypassing the system fetch_or_create method
+    ::PDB[:prior_anchor] = WHR_Player.new(:prior_anchor, Rating.new(0)) unless ::PDB.has_key?(:prior_anchor)
+    ::PDB[input[:white]] = WHR_Player.new(input[:white]) unless ::PDB.has_key?(::PDB[input[:white]])
+    ::PDB[input[:black]] = WHR_Player.new(input[:white]) unless ::PDB.has_key?(::PDB[input[:black]])
+    p = players[input[:white]]  # Fake call to get the fetch_or_create to create him
+    p = players[input[:black]]
+    white = ::PDB[input[:white]]
+    black = ::PDB[input[:black]]
+    winner = input[:winner] == "W" ? white : black
+    handi = input[:handicap]
+    komi  = (input[:komi]).floor
+    game = Game.new(:datetime, white, black, "aga", handi, komi, winner)
+    add_game(game)
+end
+
+# Kaya system format
+def self.rank(player)
+   return player.r.rank
+end
 
 def self.print_pdb()
   puts "print_pdb"
@@ -854,10 +913,14 @@ def self.print_verbose_pdb(verbose=9)
     #next if name.class == Symbol # Skip anchors etc
     print ":" if name.class == Symbol
     puts name
+    firstday = true
     for vpd in player.vpd
       puts "   %6.0f %4d-%02d-%02d num_games=%d winrate=%0.3f" % [vpd.r.elo, vpd.day.year, vpd.day.month, vpd.day.day, vpd.num_games, vpd.winrate]
       next if not verbose > 1
-      for game in vpd.games
+      prior_games = []
+      prior_games = player.prior_games if firstday
+      firstday = false
+      for game in vpd.games + prior_games
         opponent = game.get_opponent(player)
         opponent_vpd = game.get_opponent_vpd(player)
         print "      "

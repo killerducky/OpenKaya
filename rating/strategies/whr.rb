@@ -295,9 +295,10 @@ module WHR
 PRIOR_WEIGHT  = 2.0
 MMITER_CHANGE_LIMIT = 0.1
 NMSIMPLEX_SIZE      = 0.1
-MAX_LINK_STRENGTH = 200.0     # draws/days
+MAX_LINK_STRENGTH = 2000.0     # draws/days
 MIN_LINK_STRENGTH = 4.0       # Prevent weird things happening in weird cases (player doesn't play for a long time)
-LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*7.0  # First 7 days don't actually reduce max link strength
+#LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*7.0  # First 7 days don't actually reduce max link strength
+LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*1.0  # Start reducing strength from first day
 MMITER_TURN_LIMIT = 3000      # Quit if we do many loops without hitting MMITER_CHANGE_LIMIT
 HESSIAN_EPSILON = 0.0         # TODO make sure zero is ok, original was 0.1
 START_TIME = DateTime.now()   # For performance tracking only
@@ -509,15 +510,7 @@ def self.nmsimplex(verbose=0)
       get_log_likelyhood()
     end
   }
-  
-  #my_df = Proc.new { |x|
-  #  for i in (0..num_vpd-1)
-  #    vpd_map[i].r.elo = x[i]  # Map new ratings from the algorithm
-  #    #print "v[%d]=%0.2f " % [i, v[i]]
-  #  end
-  #  get_direct_log_likelyhood_df()
-  #}
-    
+
   my_func = GSL::MultiMin::Function.alloc(my_f, num_vpd)
   x = GSL::Vector.alloc(num_vpd)
   for i in (0..num_vpd-1)
@@ -613,8 +606,10 @@ def self.calc_ratings_fdf(verbose=0)
     x[i] = vpd_map[i].r.elo
   end
   # For some reason BFGS2 does not work on my testcase
-  #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)
-  minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS, num_vpd)
+  #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS2, num_vpd)  # doesn't work
+  #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::VECTOR_BFGS, num_vpd)   # works
+  #minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::CONJUGATE_FR, num_vpd)  # sorta works
+  minimizer = GSL::MultiMin::FdfMinimizer.alloc(GSL::MultiMin::FdfMinimizer::CONJUGATE_PR, num_vpd)   # works best
 
   minimizer.set(my_func, x, 10.0, 0.0001)   # 3rd arg is stepsize, 4th arg is "tol"
 
@@ -631,8 +626,7 @@ def self.calc_ratings_fdf(verbose=0)
       end
     end
     printf(" f() = %7.3f size = ????\n", minimizer.f) if verbose>0
-  #end while status == GSL::CONTINUE and iter < 500
-  end while status == GSL::CONTINUE and iter < 100
+  end while status == GSL::CONTINUE and iter < 500
   raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
     printf("converged to minimum at") if verbose>0

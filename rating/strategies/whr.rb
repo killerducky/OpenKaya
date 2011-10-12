@@ -188,7 +188,6 @@ class WHR_Player
     end
     if not @prior_initialized
       self.add_prior(game.day)
-      print "added prior to %s\n" % [@name]
       @prior_initialized = true
     end
     @vpd[-1].games.push(game)
@@ -654,13 +653,13 @@ def self.calc_ratings_fdf(verbose=0)
           print(" x=%10.5f (dx=%10.5f)" % [x[i], dx[i]])
         end
       end
-      printf(" norm_dx=%0.7f max_dx=%0.7f", dx.norm, dx.max) if verbose>0
+      printf(" norm_dx=%0.7f max_dx=%0.7f", dx.norm, dx.max) if verbose>2
     end
-    printf(" f=%7.3f min=%7.3f norm=%0.7f\n", minimizer.f, minimizer.minimum, minimizer.gradient.norm) if verbose>0
+    #printf(" f=%7.3f min=%7.3f grad_norm=%0.7f\n", minimizer.f, minimizer.minimum, minimizer.gradient.norm) if verbose>0  norm is a bit expensive
+    printf(" f=%7.3f min=%7.3f\n", minimizer.f, minimizer.minimum) if verbose>0
     $stdout.flush if verbose>0
-  #end while status == GSL::CONTINUE and iter < 500
-  end while status == GSL::CONTINUE and iter < 5 # !!!
-  #raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
+  end while status == GSL::CONTINUE and iter < 500
+  raise "Bad status = %s iter=%d" % [status, iter] if status != GSL::SUCCESS
   if status == GSL::SUCCESS
     printf("converged to minimum at") if verbose>0
   end
@@ -708,7 +707,7 @@ def self.get_log_likelyhood()
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)
-        #rd = player.r.elo - opp_adjusted_r.elo  TODO how did this compile?  There is no "r" attr/method in player objects!!!
+        #rd = player.r.elo - opp_adjusted_r.elo  TODO should rename the "r" and "rating" methods in player, dangerous confusion
         rd = vpd.r.elo - opp_adjusted_r.elo
         rd *= Rating::Q  # Convert to natural scale
         if game.winner == player
@@ -792,10 +791,13 @@ def self.get_direct_log_likelyhood(verbose=0)
       for game in vpd.games + prior_games
         # Only count the game once
         next if game.white_player != player
-        # But include the weight as viewed by both players
+        # But include the weight as viewed by both players *and* multiply by 2
         # (In cases of new players the weight is not symmetrical)
+        # TODO need to rethink how to implement this asymetrical weighting, 
+        # Because I've essentially undone the asymetricalness now
         weight = game.get_weight(player)
         weight += game.get_weight(game.get_opponent(player))
+        weight *= 2 
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)

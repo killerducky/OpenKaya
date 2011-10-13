@@ -217,7 +217,7 @@ class WHR_Player
     return s
   end
   def rating()
-    return Rating.new(-1.0) if @vpd == []   # !! TODO should probably return nil
+    return Rating.new(-1.0) if @vpd == []   # TODO should probably return nil
     return @vpd[-1].r
   end
   def r() return rating() end
@@ -306,11 +306,12 @@ module WHR
 MINIMIZE_METHOD = :fdf
 TOL = 0.0001
 STEPSIZE = 10
-EPSABS = 1e-3
+#EPSABS = 1e-3
+EPSABS = 1e-2
 PRIOR_WEIGHT  = 2.0
 MMITER_CHANGE_LIMIT = 0.1
 NMSIMPLEX_SIZE      = 0.1
-MAX_LINK_STRENGTH = 2000.0     # draws/days
+MAX_LINK_STRENGTH = 1000.0     # draws/days
 MIN_LINK_STRENGTH = 4.0       # Prevent weird things happening in weird cases (player doesn't play for a long time)
 #LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*7.0  # First 7 days don't actually reduce max link strength
 LINK_STRENGTH_SCALE = MAX_LINK_STRENGTH*1.0  # Start reducing strength from first day
@@ -406,6 +407,7 @@ def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
 end
 
 
+=begin
 # Compute Variance
 def self.compute_variance(player)
   return if player.vpd.length == 0 # skip players with no games
@@ -498,6 +500,7 @@ def self.newton(player)
     i -= 1
   end
 end
+=end
 
 def self.minimize(method=MINIMIZE_METHOD)
   printf "minimize\n"
@@ -674,6 +677,7 @@ def self.calc_ratings_fdf(verbose=0)
 
 end
 
+=begin
 
 # Use AGA-Ratings as a reference
 def self.get_log_likelyhood()
@@ -764,6 +768,8 @@ def self.get_log_likelyhood_df(df)
    return 0
 end
 
+=end
+
 # Just take the log of the probability of the game outcome
 # Probably less proper than the log_erfc method
 # Main problem is it gets a math overflow before it can run Math.log() to avoid that
@@ -797,7 +803,7 @@ def self.get_direct_log_likelyhood(verbose=0)
         # Because I've essentially undone the asymetricalness now
         weight = game.get_weight(player)
         weight += game.get_weight(game.get_opponent(player))
-        weight *= 2 
+        weight *= 2
         hka = game.handi_komi_advantage(player)
         opp_vpd = game.get_opponent_vpd(player)
         opp_adjusted_r = Rating.new(opp_vpd.r.elo+hka.elo)

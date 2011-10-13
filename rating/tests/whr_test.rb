@@ -9,14 +9,6 @@ MINIMIZE_METHOD = :fdf
 
 def self.tostring_now()  return "total %0.1fs" % [(DateTime.now() - START_TIME)*24*60*60] end
 
-def self.minimize
-  printf "minimize\n"
-  case MINIMIZE_METHOD
-    when :nmsimplex then WHR::nmsimplex()
-    when :fdf       then WHR::calc_ratings_fdf(1)
-  end
-end
-
 printf "%s\n" % [tostring_now]
 WHR::print_constants()
 
@@ -58,14 +50,14 @@ test "strength spike" do
   black1.vpd[0].r.elo = 210
   black2.vpd[0].r.elo = 220
   puts WHR::tostring_now()
-  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  puts "get_direct_log_likelyhood=%f" % [WHR::get_direct_log_likelyhood]
   WHR::print_verbose_pdb(9)
-  minimize()
-  puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  WHR::minimize()
+  puts "get_direct_log_likelyhood=%f" % [WHR::get_direct_log_likelyhood]
   WHR::print_verbose_pdb(1)
   #puts "start mm_iterate=%s" % [WHR::tostring_now()]
   #WHR::mm_iterate()
-  #puts "get_log_likelyhood=%f" % [WHR::get_log_likelyhood]
+  #puts "get_direct_log_likelyhood=%f" % [WHR::get_direct_log_likelyhood]
   #puts black.tostring()
   #puts p_init.tostring()
   #puts p_final.tostring()
@@ -93,7 +85,7 @@ test "win_ratio" do
       date += 1
     end
     printf "win_ratio=%d stronger=%s\n" % [win_ratio, stronger]
-    minimize()
+    WHR::minimize()
     puts black.tostring(1)
     WHR::print_sorted_pdb()
     WHR::print_verbose_pdb(1)
@@ -178,7 +170,7 @@ def multi_test(test)
       puts "gamenum=%d R=%0.2f" % [gamenum, rating[gamenum]]
     end
   end
-  minimize()
+  WHR::minimize()
   WHR::print_verbose_pdb(1)
   WHR::print_sorted_pdb()
 end
@@ -198,7 +190,7 @@ test "Equal wins" do
       for num_games in (1..3)
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_b),0)
         WHR::add_game(Game.new(date, plr_w, plr_b, "aga", handi, komi, plr_w),0)
-        minimize()
+        WHR::minimize()
         diff = plr_w.r.kyudan - plr_b.r.kyudan - Rating.advantage_in_stones(handi, komi, 7.5)
         puts "h=%d k=%0f diff=%0.2f  %f - %f - %f" % [handi, komi, diff, plr_w.r.kyudan, plr_b.r.kyudan, Rating.advantage_in_stones(handi, komi, 7.5)]
         assert (diff.abs < 0.05)             # Ratings should almost match the handicap advantage
@@ -225,8 +217,8 @@ test "Ratings response" do
   puts "Ratings response"
   #PREV_GAMES = 30
   #POST_GAMES = 30
-  PREV_GAMES = 25
-  POST_GAMES = 25
+  PREV_GAMES = 20
+  POST_GAMES = 20
   #
   # TODO: Measure rate that Variance decreases
   # TODO: Make sure new player ratings move fast
@@ -251,9 +243,9 @@ test "Ratings response" do
         date += days_rest
       end
       puts "minimize on even games"
-      minimize()
+      WHR::minimize()
       WHR::print_sorted_pdb()
-      WHR::print_verbose_pdb()
+      WHR::print_verbose_pdb(9)
       for i in 1..POST_GAMES
         prev_rating = plr_b.rating.dup
         anchor_name = "anchor%d"%[i]
@@ -264,7 +256,9 @@ test "Ratings response" do
         WHR::add_game(Game.new_even(date, plr_anchor, plr_b, init_aga_rating >= 0 ? plr_b : plr_anchor))
         printf "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest} postgames = %d\n" % [i]
         WHR::print_sorted_pdb()
-        minimize()
+        WHR::print_verbose_pdb(9)
+        #WHR::minimize()
+        WHR::calc_ratings_fdf(days_rest == 1 ? 2:1)
         dKD = (plr_b.rating.kyudan - prev_rating.kyudan).abs
         puts "%3d %6.2f  %4.2f (%4.1f)" % [i, plr_b.rating.kyudan, dKD, 1/dKD]
         key_results[init_aga_rating][:dKD_init     ][days_rest] = dKD    if i==1

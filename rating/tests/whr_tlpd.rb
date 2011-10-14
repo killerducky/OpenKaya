@@ -30,6 +30,7 @@ end
 
 printf "%s\n" % [tostring_now]
 WHR::print_constants()
+#read_data_set("data/tlpd.csv")
 read_data_set("data/tlpd_short.csv")
 WHR::minimize()
 WHR::print_sorted_pdb()

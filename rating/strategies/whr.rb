@@ -303,13 +303,13 @@ end
 
 module WHR
 
-MINIMIZE_METHOD = :fdf
+MINIMIZE_METHOD = :mm_iter
 TOL = 0.0001
 STEPSIZE = 10
 #EPSABS = 1e-3
 EPSABS = 1e-2
 PRIOR_WEIGHT  = 2.0
-MMITER_CHANGE_LIMIT = 0.1
+MMITER_CHANGE_LIMIT = 0.01
 NMSIMPLEX_SIZE      = 0.1
 MAX_LINK_STRENGTH = 1000.0     # draws/days
 MIN_LINK_STRENGTH = 4.0       # Prevent weird things happening in weird cases (player doesn't play for a long time)
@@ -373,6 +373,7 @@ def self.find_upsets()
 end
 
 def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
+  mm_iterate_start = DateTime.now()
   players = ::PDB.values() if players == nil # By default do all players
   for i in (1..turn_limit)
     maxchange = 0
@@ -399,11 +400,13 @@ def self.mm_iterate(turn_limit=MMITER_TURN_LIMIT, players=nil)
       end
     end
     if i>1 and i % 100 == 0
-      #puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+      puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
     end
     break if maxchange < MMITER_CHANGE_LIMIT
   end
   i and i>100 and puts "mm_iterate int turns=%d maxchange=%f %s" % [i, maxchange, tostring_now()]
+  raise "mm_iterate exceeded turn limit" if i >= MMITER_TURN_LIMIT
+  print "mm_iterate took %0.1f seconds\n" % [(DateTime.now() - mm_iterate_start)*24*60*60]
 end
 
 
@@ -505,8 +508,9 @@ end
 def self.minimize(method=MINIMIZE_METHOD)
   printf "minimize\n"
   case method
-    when :nmsimplex then WHR::nmsimplex()
-    when :fdf       then WHR::calc_ratings_fdf(1)
+    when :nmsimplex then nmsimplex()
+    when :fdf       then calc_ratings_fdf(1)
+    when :mm_iter   then mm_iterate()
   end
 end
 

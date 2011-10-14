@@ -257,8 +257,7 @@ test "Ratings response" do
         printf "init_aga_rating=#{init_aga_rating} days_rest=#{days_rest} postgames = %d\n" % [i]
         WHR::print_sorted_pdb()
         WHR::print_verbose_pdb(9)
-        #WHR::minimize()
-        WHR::calc_ratings_fdf(days_rest == 1 ? 2:1)
+        WHR::minimize()
         dKD = (plr_b.rating.kyudan - prev_rating.kyudan).abs
         puts "%3d %6.2f  %4.2f (%4.1f)" % [i, plr_b.rating.kyudan, dKD, 1/dKD]
         key_results[init_aga_rating][:dKD_init     ][days_rest] = dKD    if i==1
